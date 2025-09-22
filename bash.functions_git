@@ -1,0 +1,1021 @@
+# can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# include guard
+filename="bash.functions_git"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+source "${DOTFILES_DIR:?}"/bash.functions_util
+
+################################################################################
+# depends on ${DOTFILES_DIR}/bash.functions_util
+#
+# functions in git.* namespace for working with git.
+# NOTE: Could potentially be integrated into git via aliases, but at this time
+#       I prefer to prioritize cohesion and consolidate the functionality here.
+#
+#
+# TODO: 
+# -- Refactor to use a pattern analogous to a "thread safe interface" with
+#    "un_checked" variants of methods that begin with '_' that can be used
+#    by other methods in this file to avoid repeating assertions that are only
+#    needed for the externally facing functions.
+#
+# -- add git.mkbranch() function to create branch locally and remote, and to 
+#    write the name of the current branch (which will be the parent) to a 
+#    "well known location" where we can pick it up as needed from other git.*()
+#    functions here in preference to the current functions that are not 
+#    completely reliable.
+#
+# -- consider adding "mv" function to selectively and automatically use "git mv"
+#    when inside a git repository. [NOTE: Carefully evaluate for possibility of
+#    accidentally causing errors.]
+#
+# -- add functions to: for each of [local]<-->[remote] and [remote]<-->[parent] 
+#    find number of commits ahead/behind
+# -- amend prompt with that information.
+#
+# -- git.branch_switch()
+#    -- do appropriate validations
+#    -- use "git branch" to get local branches
+#    -- present a menu to select one of those to go to with
+#       -- git checkout ${branch_name}
+#       -- git pull
+#    -- potentially amend menu with options to
+#       -- enter another (existing) branch name
+#       -- create a new branch (both locally and on repository)
+#
+# -- cache name of parent_branch when known in environment variables that 
+#    embed the name of the child_branch. 
+#    -- an associative array indexed by current branch name would be cleaner
+#       but we would not be able to export it into the environment.
+################################################################################
+
+
+################################################################################
+# Informational (for reference):
+#
+### to create a basic git clone
+# cd ~/git/splunk<#>
+# git clone ssh://git@git.splunk.com:7999/splcore/main.git
+#
+##  to output history of branch that skips commits pulled in via merge.
+#
+# git log --decorate --oneline --graph --first-parent
+#
+# git log --decorate --oneline --graph --simplify-merges
+#
+# NOTE: "--first-parent" option directs git to follow only the first parent 
+#     commit upon seeing a merge commit. This option can give a better overview
+#     when viewing the evolution of a particular topic branch, because merges 
+#     into a topic branch tend to be only about adjusting to updated upstream,
+#     and this option allows you to ignore the individual commits brought in to
+#     the local branch history by those merges.
+# TODO: investigate and document what --simplify-merges should do.
+#
+### to create a clone that leverages an existing checkout use:
+# cd ~/git/splunk<#>/main
+# git clone --dissociate --reference <~/git/splunk1/main \
+#           ssh://git@git.splunk.com:7999/splcore/main.git \
+#            ~/git/splunk<#>/main
+#
+### on dev cluster use:
+# git clone --dissociate --reference /home/git-cache/main \
+#           ssh://git@git.splunk.com:7999/splcore/main.git \
+#           <path_to_put_clone>
+#
+### from brew installed bash-git-prompt:
+### [see: https://github.com/magicmonty/bash-git-prompt ]
+#    if [ -f "/usr/local/opt/bash-git-prompt/share/gitprompt.sh" ]; then
+#        __GIT_PROMPT_DIR="/usr/local/opt/bash-git-prompt/share"
+#        source "/usr/local/opt/bash-git-prompt/share/gitprompt.sh"
+#    fi
+#
+### from brew installed git 2.20.0:
+### see also /usr/local/etc/bash_completion.d/git-completion.bash
+#    source "/usr/local/etc/bash_completion.d/git-prompt.sh"
+### The environment variables below control the behavior of the bash function 
+### __git_ps1 defined in git-prompt.sh (installed with "git" on my mac via
+### "brew install git"  under /usr/local/etc/bash-completions.d/)
+###
+### NOTE: I am not yet using __git_ps1 because I want to preserve a uniform 
+###       environment between my Mac and the dev-cluster environments.
+### NOTE: GIT_PS1_SHOWUPSTREAM may also be set with a comma sepparated list of 
+###       values: { verbose, name, legacy, git }
+# export GIT_PS1_SHOWDIRTYSTATE="1"
+# export GIT_PS1_SHOWSTASHSTATE="1"
+# export GIT_PS1_SHOWUNTRACKEDFILES="1"
+# export GIT_PS1_STATESEPARATOR=" " #space is default value.
+# export GIT_PS1_SHOWCOLORHINTS=true
+# export GIT_PS1_HIDE_IF_PWD_IGNORED="1"
+# export GIT_PS1_SHOWUPSTREAM="auto"
+#
+################################################################################
+
+
+################################################################################
+################################################################################
+# git environment variables:
+#   see: https://git-scm.com/book/en/v2/Git-Internals-Environment-Variables
+#
+# GIT_CEILING_DIR : limit how far up the directory tree, git will look for .git
+# GIT_EDITOR      : editor program ( EX: nvim, mvim, vim, nvi, vi, emacs )
+# GIT_PAGER       : pager program ( EX: more, less, bat )
+################################################################################
+################################################################################
+GIT_CEILING_DIRS="${HOME}"
+GIT_EDITOR="${EDITOR}"
+      # "$(util.which_of_these "${VISUAL}" "${EDITOR}" nvim mvim vim nvi vi)"
+
+# `bat` triggers issues with infinite recursion.
+GIT_PAGER="${PAGER}"
+     # $(util.which_of_these "${PAGER}" less more )"
+export GIT_CEILING_DIRS GIT_EDITOR GIT_PAGER
+
+################################################################################
+################################################################################
+# git related functions
+################################################################################
+################################################################################
+git.() { bash.show_functions 'git\.' ; }
+
+git.gitk() { git.assert_in_repository && gitk; }
+
+###############################################
+# to update information from remote repository (branches / tags / etc.) without
+# other side-effects:
+###############################################
+git.refresh() { git fetch; }
+
+###############################################
+# to get a "deep blame" that lists everybody that has touched the code.
+###############################################
+git.blame_list() 
+{
+    git log -p -M --follow --stat -- "${1:?filename must be specified}"
+}
+
+################################################
+################################################
+# tests (simple predicates) 
+################################################
+################################################
+
+###############################################
+# git.test_in_git_dir()
+# -- indicate if we are in the .git/ directory that is in the root of a 
+#    repository (where git.test_in_worktree() would return false)
+#
+# git.test_in_worktree()
+# -- indicate if we are within a local repository (other than in a .git/ 
+#    directory in the repository)
+#
+# NOTE: the git commands used in these 2 functions (git rev-parse --is-inside*)
+#       return the text "true" or "false" which is then executed 
+#       (within these functions) to generate the desired return status.
+# NOTE: git.test_in_worktree() is NOT discriminating between work-tree linked
+#       to a seperate local repository vs. a local repository.
+###############################################
+# SC2091: remove $() to avoid executing output
+# that is the behavior we need here
+# (git returns 'true' or 'false' for execution)
+# shellcheck disable=SC2091
+git.test_in_git_dir()    { $(git rev-parse --is-inside-git-dir 2>/dev/null); }
+# shellcheck disable=SC2091
+git.test_in_worktree()   { $(git rev-parse --is-inside-work-tree 2>/dev/null); }
+
+###############################################
+# uses the two commands above in combination to determine if we are anywhere
+# within the repository 
+# NOTE: git.test_in_repository() is NOT discriminating between work-tree linked
+#       to a seperate local repository vs. a local repository.
+###############################################
+git.test_in_repository() { git.test_in_git_dir || git.test_in_worktree; }
+
+
+###############################################
+# indicate if there are uncommitted changes.
+# returns false if there are any uncommitted changes.
+###############################################
+git.test_no_uncommitted_changes() { git diff-index --quiet HEAD --; }
+
+
+###############################################
+# indicates ancestor relationship (or lack of one) between 
+# two commit parameters (not branches).
+###############################################
+git.test_is_ancestor()
+{
+    util.assert_argc 2 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <REV1> <REV2>\n" || return 2
+
+    if (git merge-base --is-ancestor "$1" "$2" ); then
+        echo "$1 is an ancestor of $2"
+        return 0
+    elif (git merge-base --is-ancestor "$2" "$1" ); then
+        echo "$2 is an ancestor of $1"
+        return 0
+    else
+        echo "$1 and $2 are not related"
+        return 1
+    fi
+}
+
+################################################
+# indicates by exit status whether or not a branch 
+# exists on the remote repository
+#
+# takes an optional branch-name parameter if no parameter 
+# specified, defaults to the current branch (if in a git repository)
+################################################
+git.test_branch_exists_remote()
+{
+    git ls-remote --exit-code --heads origin "${1:-$(git.get_branch)}" &>/dev/null
+}
+
+
+###############################################
+# 
+###############################################
+git.test_branch_exists_local()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" "USAGE:\n${FUNCNAME[0]} <branch_name>" \
+        && git.assert_in_repository || return $?
+
+    local branch_name="$1"
+    git rev-parse -q --verify "${branch_name}" >/dev/null 2>&1
+}
+
+################################################
+################################################
+# assertions (simple predicates) 
+################################################
+################################################
+
+###############################################
+# 
+###############################################
+git.assert_no_uncommitted_changes()
+{
+   git.test_no_uncommitted_changes \
+   || echo.error "uncommitted changes in this local repository"
+}
+
+###############################################
+# 
+###############################################
+git.assert_branch_exists_remote() 
+{
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" \
+                        "USAGE:\n${FUNCNAME[0]} [<branch_name>]" \
+        && git.assert_in_repository || return $?
+    git.test_branch_exists_remote "${*}" \
+    || echo.error "branch \"${*}\" does not exist on remote repository"
+}
+
+
+###############################################
+# return:
+# status 2 if used with an invalid number of parameters or the status ($?) of
+# the git command otherwise (0 if inside a repository or !0 on any failure)
+###############################################
+git.assert_in_repository()
+{
+   git.test_in_repository \
+   || echo.error "Current directory : \"${PWD}\" is NOT in a git repository"
+}
+
+###############################################
+# check of a branch-name exists in the LOCAL repository.
+# I.e. only detects branches that appear with "git branch"
+# return : status 2 if used with an invalid number of parameters or the status
+#          ($?) of the git command otherwise (0 if branch exists)
+###############################################
+git.assert_branch_exists()
+{
+   util.assert_argc 1 $# "${FUNCNAME[0]}" "USAGE:\n${FUNCNAME[0]} <branch_name>" \
+      && git.assert_in_repository || return $?
+
+   local branch_name="$1"
+
+   # error code from "git rev-parse" is preserved and returned in either case.
+   git rev-parse --verify "${branch_name}" >/dev/null 2>&1 \
+      || echo.error "branch ${branch_name} does not exist."
+}
+
+################################################
+################################################
+# getters (return info on current repository)
+################################################
+################################################
+
+###############################################
+# return the full path to the git directory (.../.git/) of the current 
+# repository.
+###############################################
+git.get_gitdir()       { echo -n "$(git rev-parse --git-dir)"; }
+
+###############################################
+# returns the current branchname or an empty string if not in a git repository
+# NOTE: does not fail if not in a repository.
+###############################################
+git.get_branch()
+{
+    # TODO: git 2.22 adds "git branch --show-current" which will acomplish 
+    #       this more reliably (will still need the current version for now as
+    #       a fallback until >2.22 is ubiquitous.
+
+    # util.assert_argc 0 $# "${FUNCNAME[0]}" || return $?
+    # echo -n $(git branch 2>/dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1/')
+    # echo -n $(git symbolic-ref --short -q HEAD 2>/dev/null)
+
+    # This variant works for git prior to version 2.22 when the command
+    # above was added.
+    local branch
+    if branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
+        if [[ "${branch}" == "HEAD" ]]; then
+            echo -n ">detached<"
+        else
+            echo -n "${branch}"
+        fi
+    # else return nothing (empty string)
+    fi
+}
+
+###############################################
+# return the parent/base of the specified branch if one is specified or the
+# parent/vase of the current branch if no parameter is specified. 
+# @return an error message and non-zero return value if the current branch is 
+#         "develop", "master" or if the current working directory is not in a 
+#         repository.  Otherwise returns the name of the parent branch.
+###############################################
+# SC2120: references arguments that are never passed
+# (an argument is optional here)
+# shellcheck disable=SC2120
+git.get_branch_parent()
+{
+    # util.assert_argc_le 1 $# "${FUNCNAME[0]}" && \
+    git.assert_in_repository || return $?
+    local cur_branch="${1:-$(git.get_branch)}"
+    if [[ "${cur_branch}" == "develop" ]] || \
+       [[ "${cur_branch}" == "master" ]]; then
+        echo -n "in ${cur_branch}, NO PARENT BRANCH"
+        return 1
+    fi 
+    # _git.get_branch_parent4
+    # (not yet ready for prime-time)
+    util.cache "${cur_branch}" "_git.get_branch_parent1 ${cur_branch}"
+}
+
+
+###############################################
+###############################################
+# NOTE: all of the variants below suffer from a problem with returning the
+#       wrong parent for some branches at some times. E.g. 
+#       "feature/ssc-cleanup-logging-additions" (splunk1) returning 
+#       "SPL-166661" instead of "feature/ssc-search-head-integration"
+#
+#       The erroneous branch returned seems to possibly always be a branch that
+#       is in the local repository (i.e. it will also be returned by "git branch") 
+#
+# TODO: consider an alternative means of tracking the parent branch including:
+#       -- manually saving in a file that is .gitignored 
+#       -- changing directory to ~/git/develop/main to make the query (in a 
+#          sub-shell) since that repository doesn't normally contain any other
+#          branches
+#       -- ?
+###############################################
+###############################################
+
+###############################################
+# This variant is working as well as anything else...
+###############################################
+_git.get_branch_parent0()
+{
+    local this_branch="${1:-$(git.get_branch)}"
+    git show-branch -a 2>/dev/null \
+    | grep -F '*' \
+    | grep -v "${this_branch}" \
+    | head -n1 \
+    | sed 's/.*\[\(.*\)\].*/\1/' \
+    | sed 's/[\^~].*//'
+}
+
+# seems to work and produces correct answer for my branch:
+# feature/ssc-cleanup-logging-additions (splunk1) but:
+# 1) returns empty string without error, 
+# 2) returns an error "grep: invalid repetition count(s)" on my
+#    .dotfiles repository, 
+# 3) seems to be a bit slow to use in a prompt...
+_git.get_branch_parent1()
+{
+    local vbc="${1:-$(git.get_branch)}"
+    local vbc_col=$(( $(git show-branch | grep '^[^\[]*\*' | head -1 | cut -d* -f1 | wc -c) - 1 )) 
+    local swimming_lane_start_row=$(( $(git show-branch | grep -n "^[\-]*$" | cut -d: -f1) + 1 )) 
+    git show-branch \
+    | tail -n +$swimming_lane_start_row \
+    | grep -v "^[^\[]*\[$vbc" \
+    | grep "^.\{$vbc_col\}[^ ]" \
+    | head -n1 \
+    | sed 's/.*\[\(.*\)\].*/\1/' \
+    | sed 's/[\^~].*//'
+}
+
+_git.get_branch_parent2()
+{
+    local this_branch current_branch_escaped
+    # escape '/' with '\/'
+    this_branch="${1:-$(git.get_branch)}"
+    current_branch_escaped=$(echo "${this_branch}"| sed 's/\//\\\//g')
+
+    git show-branch -a 2>/dev/null \
+    | awk -F'[]^~[]' '/\*/ && !/'"$current_branch_escaped"'/ {print $2;exit}'
+}
+
+# tries to generate a table, but it is always coming up empty...
+# NOTE: "git branch" at root will only show "local" branches.
+_git.get_branch_parent3()
+{
+    local HEAD="${1:-$(git.get_branch)}"
+    echo "Comparing to $HEAD"
+    printf "%12s  %12s   %10s     %s\n" "Behind" "BehindMerge" "Ahead" "Branch"
+    # shellcheck disable=SC2063
+    git branch \
+    | grep -v '^*' \
+    | sed 's/^\* //g' \
+    | while read -r branch ; do
+        ahead_merge_count="$(git log --oneline --merges "$branch" ^"$HEAD" | wc -l)"
+        if [[ ${ahead_merge_count} != 0 ]] ; then
+            continue
+        fi
+        ahead_count="$(git log --oneline --no-merges "$branch" ^"$HEAD" | wc -l)"
+        behind_count="$(git log --oneline --no-merges ^"$branch" "$HEAD" | wc -l)"
+        behind_merge_count="$(git log --oneline --merges ^"$branch" "$HEAD" | wc -l)"
+        behind="-$behind_count"
+        behind_merge="-M$behind_merge_count"
+        ahead="+$ahead_count"
+        printf "%12s  %12s   %10s     %s\n" "$behind" "$behind_merge" "$ahead" "$branch"
+    done \
+    | sort -n
+}
+
+# from: https://stackoverflow.com/questions/3161204/how-to-find-the-nearest-parent-of-a-git-branch/3162929#3162929
+_git.get_branch_parent4()
+{
+    local current_branch
+    current_branch="${1:-$(git.get_branch)}"
+
+    # Here's how it works:
+    # 1) Display a textual history of all commits, including remote branches.
+    # 2) Ancestors of the current commit are indicated by a star. 
+    #    Filter out everything else.
+    # 3) Ignore all the commits in the current branch.
+    # 4) The first result will be the nearest ancestor branch. 
+    #    Ignore the other results.
+    # 5) Branch names are displayed [in brackets]. 
+    #    Ignore everything outside the brackets, and the brackets.
+    # 6) Sometimes the branch name will include a ~# or ^# to indicate how many
+    #    commits are between the referenced commit and the branch tip. 
+    #    We don't care. Ignore them.
+    # git show-branch -a 2>/dev/null | 
+    git show-branch -a 2>/dev/null | 
+    grep "\*"                      |
+    grep -v "$current_branch"      |
+    head -n1                       |
+    sed 's/.*\[\(.*\)\].*/\1/'     |
+    sed 's/[\^~].*//' 
+}
+
+# from: https://stackoverflow.com/questions/3161204/how-to-find-the-nearest-parent-of-a-git-branch/3162929#3162929
+# NOTE: This variant seems to have extra characters after the branch name.
+_git.get_branch_parent4a()
+{
+    local current_branch="${1:-$(git.get_branch)}"
+
+      git show-branch -a 2>/dev/null \
+    | sed "s/].*//" \
+    | grep "\*" \
+    | grep -v "$current_branch" \
+    | head -n1 \
+    | sed "s/^.*\[//"
+}
+
+###############################################
+# return the root directory of the current branch
+###############################################
+git.get_branch_rootdir()
+{
+   # util.assert_argc 0 $# "${FUNCNAME[0]}" && \
+   git.assert_in_repository || return $?
+   echo -n "$(git rev-parse --show-toplevel)"
+}
+
+###############################################
+# returns the path of the specified file relative to the root of the git source
+# tree.
+# return : status 2 if used with an invalid number of parameters or the status
+#          ($?) of the git command otherwise
+###############################################
+git.get_filepath_to_branch_rootdir()
+{
+   util.assert_argc 1 $# "${FUNCNAME[0]}" "USAGE:\n${FUNCNAME[0]} <file_name>" \
+      && git.assert_in_repository || return 2
+   local filename
+   filename=$1
+   echo -n "$(git ls-tree --full-name --name-only HEAD "${filename}")"
+}
+
+################################################
+# return short branch status of empty string or
+# (+!?$) where:
+# + : uncommitted changes
+# ! : unstaged changes
+# ? : untracked files
+# $ : stashed files.
+################################################
+git.get_branch_status_short()
+{
+    git.test_in_repository || return 0
+
+    # Ensure the index is up to date.
+    # git update-index --really-refresh -q &>/dev/null;
+
+    local s;
+    # Check for uncommitted changes in the index.
+    git diff --quiet --ignore-submodules --cached || s+='+'
+
+    # Check for unstaged changes.
+    git diff-files --quiet --ignore-submodules -- || s+='!'
+
+    # Check for untracked files.
+    if [ -n "$(git ls-files --others --exclude-standard)" ]; then s+='?'; fi;
+
+    # Check for stashed files.
+    git rev-parse --verify refs/stash &>/dev/null && s+='$'
+
+    [[ -n $s ]] && echo -n "(${s})"
+    return 0
+}
+
+################################################
+################################################
+# git.diff_* functions
+#
+# TODO: "beyond compare" will return silently when there are no differences.
+#       explicitly test for that and provide an appropriate message in that
+#       case.
+# TODO: replace (most of) these with a git.difftool function that will 
+#       -- consistently enable editing of local files when appropriate.
+#       -- consistently provide --dir-diff nav functionality (not file-by-file)
+#       -- interactively query for the diff targets (as appropriate).
+#          -- the state of the current branch 
+#             -- in the local file-system.
+#             -- in the local repository (commits not yet pushed)
+#             -- in the remote repository
+#          -- the state of the parent branch
+#             -- latest
+#             -- common-ancestor
+#          -- develop branch
+#             -- HEAD
+#             -- common ancestor
+#          -- Specified (other) Branch
+#             -- HEAD
+#             -- common ancestor
+#          -- specific HASH 
+#             -- by pull request if feasible (e.g. diff_pr functionality).
+#             -- by HASH 
+################################################
+################################################
+
+##############
+# provide diff of all local (uncommitted) changes 
+##############
+git.diff_local_changes()
+{
+    git.assert_in_repository || return 2
+    git difftool --dir-diff 
+}
+
+##############
+# provide diff of local changes to a single file (or directory)
+##############
+git.diff_file_local_changes()
+{
+    git.assert_in_repository || return 2
+    git difftool --no-prompt "${@}"
+}
+
+##############
+# for reviewing PR requests.
+# git.diff_pr <branch under review> [<base_branch> defaults to "develop"]
+# This will provide the diff from a branch against the last
+# common ancestor on "develop" (only useful when PR is against "develop"
+#
+# TODO: add flexibility on specification for:
+#       1)  specifying of a SHA as the source
+#       2)  specifying of a URL from which to extract the information via curl?
+#           (i.e. an API, or via "screen-scraping")
+#       3)  specifying of a PR "name" to form a URL from which to extract the 
+#           information via curl?
+##############
+git.diff_pr()
+{
+    util.assert_argc_between 1 2 $# "${FUNCNAME[0]}" \
+        "USAGE:\n${FUNCNAME[0]} <branch under review> " \
+        "[<base_branch> defaults to \"develop\"]" \
+        "\n EX: ${FUNCNAME[0]} bugfix/SPL-152168-search-peer-work" \
+    && git.assert_in_repository || return 2
+
+    local review_branch="origin/${1}"
+    local base_branch="origin/${2:-develop}"
+    # NOTE: with "..." syntax (3 dots), the entity on the left is replaced with
+    #       the "last common ancestor" rather than the HEAD of that branch.
+    git difftool --dir-diff \
+          "${base_branch}"..."${review_branch}"
+}
+
+###############################################
+# use from command line to diff (with "difftool")  the current branch against 
+# its base branch.
+# git.full_diff_to_base_branch shows changes from both relative to eachother.
+#
+# git.diff_to_base_branch shows changes in local branch relative to last common
+#     ancestor.
+###############################################
+git.diff_to_parent_branch_latest()
+{
+    local base_branch_name this_branch_name
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+    && git.assert_in_repository \
+    && base_branch_name="$(git.get_branch_parent)" \
+    && this_branch_name="$(git.get_branch)" \
+    && git.assert_branch_exists "${base_branch_name}" \
+    && git.assert_branch_exists "${this_branch_name}" \
+    || return $?
+
+    git difftool --dir-diff \
+         origin/"${base_branch_name}"..origin/"${this_branch_name}" &
+}
+
+git.diff_to_parent_branch_common_ancestor()
+{
+    local base_branch_name this_branch_name
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+    && git.assert_in_repository \
+    && base_branch_name="$(git.get_branch_parent)" \
+    && this_branch_name="$(git.get_branch)" \
+    && git.assert_branch_exists "${base_branch_name}" \
+    && git.assert_branch_exists "${this_branch_name}" \
+    || return $?
+
+    # git difftool --dir-diff --no-symlinks \
+    #    origin/${base_branch_name}...origin/${this_branch_name} &
+    git difftool --dir-diff \
+        origin/"${base_branch_name}"...origin/"${this_branch_name}" &
+}
+
+################################################
+################################################
+# "miscellaneous" git functions
+################################################
+################################################
+git.graphlog() 
+{
+    git.assert_in_repository || return 2
+    git log --pretty=oneline -n 500 --graph --abbrev-commit
+}
+
+git.unstage()
+{
+    git.assert_in_repository || return 2
+    util.confirm "This will undo local changes to the repository." || return 1
+    git reset HEAD --
+}
+
+################################################
+################################################
+# the "Big, Nasty and Dangerous" git functions
+################################################
+################################################
+
+###############################################
+# squash commits 🙏
+# TODO: consider automatically creating a "backup branch" off of the current 
+#       branch before squashing "in case"/"for when" the squash goes south...
+#       (and potentially automating cleanup of that branch after the squash
+#       if confirmed as successful)
+###############################################
+git.squash_commits()
+{
+    local base_branch_name this_branch_name
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+    && git.assert_in_repository \
+    && git.assert_no_uncommitted_changes \
+    && base_branch_name="$(git.get_branch_parent)" \
+    && this_branch_name="$(git.get_branch)" \
+    && git.assert_branch_exists "${base_branch_name}" \
+    && git.assert_branch_exists "${this_branch_name}" \
+    || return $?
+
+    echo "squashing:"
+    echo "   this_branch   = \"${this_branch_name}\""
+    echo "   base_branch = \"${base_branch_name}\""
+    util.confirm || return 1
+
+    echo.banner "Squashing ${this_branch_name} ... "
+
+    echo.banner "Running \"git checkout ${this_branch_name}\" .."
+    git checkout "${this_branch_name}" \
+    || echo.error "git checkout ${this_branch_name} failed, aborting" \
+    || return $?
+
+    echo.banner "Running \"git fetch\" .."
+    git fetch \
+    || echo.error "git fetch failed, aborting" \
+    || return $?
+
+    sha=$(git rev-parse HEAD) \
+    || echo.error "git rev-parse HEAD failed, aborting" \
+    || return $?
+
+    # shellcheck disable=SC2154
+    echo.info "Feature branch's head is ${_attr[bold]}${sha}"
+
+    echo.banner "Running \"git reset --hard ${base_branch_name}\""
+    git reset --hard "${base_branch_name}" \
+    || echo.error "git reset failed, aborting" \
+    || return $?
+
+    echo.banner "Running \"git merge --squash ${sha}\" .. "
+    git merge --squash "${sha}" \
+    || echo.error "git merge --squash failed, aborting" \
+    || return $?
+
+    echo.banner "Running \"git status\"  followed by \"git commit\".. "
+    git status \
+    || echo.error "git status failed, aborting" \
+    || return $?
+
+    git commit \
+    || echo.error "git commit failed, aborting" \
+    || return $?
+
+    banner_text="$(cat <<-DONE
+	Your local branch ${_attr[bold]}"${this_branch_name}"${_attr[bold_off]}
+	is now squashed 🙏🏻
+	
+	To squash the remote branch run the following commands: ${_attr[bold]}
+	    git push origin --delete ${_attr[bold]}${this_branch_name}
+	    git push -u origin ${_attr[bold]}${this_branch_name} ${_attr[bold_off]}
+	
+	Don't forget to "reopen" any pull-request associated with this branch.
+DONE
+    )"
+    echo.banner "${banner_text}"
+    ui.flasher
+    return 0
+}
+
+###############################################
+# cn be used directly from the command line, but is primarily used as a common
+# implementation for git.merge_from_base_branch() and git.merge_to_base_branch()
+# git.merge <source branch> <destination branch>
+###############################################
+git.merge()
+{
+    # for reference; commands used by:
+    # John Taylor:
+    #    git checkout develop \
+    #    && git pull \
+    #    && git rebase develop $branch \
+    #    && git push -f origin HEAD
+    # Samat Jain:
+    #    git checkout special-branch \
+    #    && git fetch develop \
+    #    && git merge develop \
+    #    && git push
+
+    local source_branch_name destination_branch_name
+    util.assert_argc 2 $# "${FUNCNAME[0]}" \
+                    "USAGE: ${FUNCNAME[0]} <source branch> <destination branch>" \
+    && git.assert_in_repository \
+    && git.assert_no_uncommitted_changes \
+    && source_branch_name="${1:?}" \
+    && destination_branch_name="${2:?}" \
+    && git.assert_branch_exists "${source_branch_name}" \
+    && git.assert_branch_exists "${destination_branch_name}" \
+    || return $?
+
+    echo.banner \
+    "CONFIRM:   Merging:\n" \
+    "FROM: ${_attr[bold]}${source_branch_name}${_attr[bold_off]}\n" \
+    "INTO: ${_attr[bold]}${destination_branch_name}${_attr[bold_off]}\n"
+    util.confirm || return 1;
+
+    echo.banner git checkout "${source_branch_name}"
+    git checkout "${source_branch_name}" \
+    || echo.error "git checkout failed, aborting" \
+    || return $?
+
+    # TODO: add retry logic on failure.  This sometimes fails intermittently.
+    echo.banner git pull
+    git pull \
+    || echo.error "git pull failed, aborting" \
+    || return $?
+
+    echo.banner git checkout "${destination_branch_name}"
+    git checkout "${destination_branch_name}" \
+    || echo.error "git checkout failed, aborting" \
+    || return #$?
+
+    echo.banner git pull
+    git pull \
+    || echo.error "git pull failed, aborting" \
+    || return $?
+
+    echo.banner git fetch origin "${source_branch_name}"
+    git fetch origin "${source_branch_name}" \
+    || echo.error "git fetch failed, aborting" \
+    || return $?
+
+    echo.banner git merge FETCH_HEAD
+    git merge FETCH_HEAD
+    # NOTE: git merge returned with satus of 1 when "auto-merge" failed.
+    # "CONFLICT (content): Merge conflict in src/search/dispatch/..."
+    # "Automatic merge failed; fix conflicts and then commit the result"
+
+    local merge_status=$?
+    if [[ ${merge_status} -ne 0 ]]; then
+        echo.warning "status code returned by git merge: ${merge_status} "
+    else
+        echo "status code returned by git merge: ${merge_status} "
+    fi
+
+     # shellcheck disable=SC2154
+    cat << DONE
+${_attr[none]}
+     ${_attr[bold]}##################################################################
+      NOTE: If you have merge conflicts use "git merge" or use "git mergetool"
+            If you have a mergetool configured (e.g. BeyondCompare)
+      NOTE: NOTE: do NOT use the ${_attr[reverse]}-m${_attr[none]}${_attr[bold]} option on commit.
+            (Atlasian relies on the default generated message.)${_attr[bold_off]}
+
+      ${_fg[green]}#IFF there were NO merge conflicts then:${_fg[dflt]}
+      make -j10 install  ${_fg[green]}# Sanity check that everything still builds as intended.${_fg[dflt]}
+      git push origin ${destination_branch_name}
+
+      ${_fg[green]}#IF there were any merge conflicts then:${_fg[dflt]}
+      git merge          ${_fg[green]}# or "git mergetool"${_fg[dflt]}
+      make -j10 install  ${_fg[green]}# Sanity check that everything still builds as intended.${_fg[dflt]}
+      git status         ${_fg[green]}# Sanity check to make sure modified files look corect${_fg[dflt]}
+      git add -u         ${_fg[green]}# to add any files modified in resolving merge conflicts${_fg[dflt]}
+      git commit         ${_fg[green]}# NOTE: DO NOT commit with the "-m" option or modify the${_fg[dflt]}
+                         ${_fg[green]}#       generated default commit message${_fg[dflt]}
+      git push origin ${destination_branch_name}
+
+     ${_attr[bold]}##################################################################${_attr[bold_off]}
+
+DONE
+    return ${merge_status}
+}
+
+###############################################
+# use from command line to merge the parent/base of the current branch into the
+# current branch.
+###############################################
+git.merge_from_base_branch()
+{
+    local base_branch_name this_branch_name
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+        && git.assert_in_repository \
+        && git.assert_no_uncommitted_changes \
+        && base_branch_name="$(git.get_branch_parent)" \
+        && this_branch_name="$(git.get_branch)" \
+        && git.assert_branch_exists "${base_branch_name}" \
+        && git.assert_branch_exists "${this_branch_name}" \
+        || return $?
+
+    git.merge "${base_branch_name}" "${this_branch_name}"
+}
+
+###############################################
+# use from command line to merge the current branch back into its base branch
+# (except for develop).
+###############################################
+git.merge_to_base_branch()
+{
+    local base_branch_name this_branch_name
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+        && git.assert_in_repository \
+        && git.assert_no_uncommitted_changes \
+        && base_branch_name="$(git.get_branch_parent)" \
+        && this_branch_name="$(git.get_branch)" \
+        && git.assert_branch_exists "${base_branch_name}" \
+        && git.assert_branch_exists "${this_branch_name}" \
+        || return $?
+
+    git.merge "${this_branch_name}" "${base_branch_name}"
+}
+
+###############################################
+# delete the current branch, both locally and remotely.
+# TODO: add check to see if the remote branch has not been merged into another
+#       stream.
+###############################################
+git.destroy_branch()
+{
+    local branch_name this_branch
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+        && git.assert_in_repository \
+        || return 2
+
+    branch_name="${1:?}"
+    this_branch="$(git.get_branch)"
+    if [[ "$branch_name" == "$this_branch" ]]; then
+        echo.error "don't saw off the branch your are sitting on!" \
+                   "\"${branch_name}\"."
+        return 1;
+    fi
+
+    echo " DELETE \"${branch_name}\""
+    read -r -p "CONTINUE?: \"YES\" (anything else aborts)" confirmation
+    if [[ "${confirmation}" != "YES" ]]; then
+        echo "ABORTING"
+        return 1;
+    fi
+
+    git push origin --delete "${branch_name}" \
+        || echo.warning "delete of origin failed.\nAssuming remote" \
+                        "branch already deleted, or never existed"
+
+    if git branch -D "${branch_name}"; then
+        echo.banner "branch ${branch_name} deleted" 
+    else
+        echo.error "deletion of local branch ${branch_name} failed."
+        return 1;
+    fi
+}
+
+
+###############################################
+# get current status of git repo
+###############################################
+git.is_branch_dirty()
+{
+    # stolen from: https://www.mobomo.com/2009/02/git-status-in-your-prompt/
+    [[ $(git status 2>/dev/null | tail -n1) \
+       != "nothing to commit (working directory clean)" ]] \
+    && echo "dirty"
+}
+
+git.is_branch_dirty2()
+{
+    TODO
+#    # stolen from: http://ezprompt.net
+#    # NOTE: Doesn't seem to be working, needs investigation
+#    local status dirty untracked ahead newfile renamed deleted bits
+#    set -x
+#    status=$(git status 2>&1 | tee)
+#    dirty=$(echo -n "${status}" 2> /dev/null | grep "modified:" &> /dev/null; echo "$?")
+#    untracked=$(echo -n "${status}" 2> /dev/null | grep "Untracked files" &> /dev/null; echo "$?")
+#    ahead=$(echo -n "${status}" 2> /dev/null | grep "Your branch is ahead of" &> /dev/null; echo "$?")
+#    newfile=$(echo -n "${status}" 2> /dev/null | grep "new file:" &> /dev/null; echo "$?")
+#    renamed=$(echo -n "${status}" 2> /dev/null | grep "renamed:" &> /dev/null; echo "$?")
+#    deleted=$(echo -n "${status}" 2> /dev/null | grep "deleted:" &> /dev/null; echo "$?")
+#    bits=''
+#    if [ "${renamed}" == "0" ]; then
+#        bits=">${bits}"
+#    fi
+#    if [ "${ahead}" == "0" ]; then
+#        bits="*${bits}"
+#    fi
+#    if [ "${newfile}" == "0" ]; then
+#        bits="+${bits}"
+#    fi
+#    if [ "${untracked}" == "0" ]; then
+#        bits="?${bits}"
+#    fi
+#    if [ "${deleted}" == "0" ]; then
+#        bits="x${bits}"
+#    fi
+#    if [ "${dirty}" == "0" ]; then
+#        bits="!${bits}"
+#    fi
+#    if [ ! "${bits}" == "" ]; then
+#        echo " ${bits}"
+#    else
+#        echo ""
+#    fi
+#    set +x
+}
+
+# this is returning the remote repository
+_git.get_branch_origin()
+{
+    # shellcheck disable=SC1083
+    git rev-parse --abbrev-ref --symbolic-full-name @{u}
+}
+
+fi # end of include guard

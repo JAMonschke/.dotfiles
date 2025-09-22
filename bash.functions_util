@@ -1,0 +1,727 @@
+# can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# variables referenced but notassigned
+# shellcheck disable=SC2154
+
+# include guard
+filename="bash.functions_util"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+################################################################################
+################################################################################
+# functions that are intended for use within other bash scripts.
+# I.e. functions that are not generally useful from the command line.
+#
+# NOTE: depends on ${DOTFILES_DIR}/bash.ansi
+#
+# TODO: functions (or a compiled executable) to persist key_value pairs
+#       -- get: persistent across environments 
+#          -- in a json file in .dotfile/kv.json
+#          -- intended primarily for "default" values.
+#       -- set/get: persistent in local environment
+#          -- in a json file in ~/.kv.json
+#       -- set/get: in exported shell variables (visible to child shells, but 
+#          not persisted otherwise (preferably in a single exported array 
+#          variable)
+#       -- set/get: in global, non-exported variable.
+#          -- visible to current shell, in all functions up/down call-stack.
+#       -- set/get: in local, non-exported variable.
+#          -- visible only to current shell.
+#       -- get: layered accessor method to find value in reverse sequence of
+#          above to provide "over-riding" semantics.
+#
+# TODO: print the specified "help" text if there is a single argument with the
+#       text "help".
+#
+#      usage: 
+#      util.help $# "$*" "${FUNCNAME[0]} my help text..."
+#
+# TODO: consider whether it makes sense to embed this functionality in the 
+#       util.assert_argc* macros. (or more likely, create new macros to 
+#       encompass the combined functionality).
+#
+#       I.e. it would function the same as an invalid parameter count, but would
+#       provide a cleaner interface in the case of util.assert_argc 0 when no 
+#       arguments are normally expected, and provide a safe fall-through case 
+#       for util.assert_argc 1 when a single argument would normally be expected.
+#
+#       NOTE:
+#       would imply that the new macro(s) would need to also take 
+#       the full parameter lists on every call so that the text "help" could be
+#       identified.
+#
+#       Consider consolidating everything into a single util.argcheck() macro 
+#       that would consistently take a parameter list with :
+#       -- help text for the function
+#          -- where USAGE:\n${FUNCNAME[1]} " is automatically prepended
+#          -- where a trailing is automatically (conditionally?) appended to 
+#             the help text.
+#       -- a minimum number of expected agruments
+#       -- a maximum number of expected arguments 
+#          -- where -1 specifies no maximum
+#       -- the argument count for the function
+#       -- the argument list for the function,
+#
+#       example proposed usage:
+#       util.argcheck "paramter list\n help text" \
+#                      1 3 $# "$*"
+#
+# TODO: Cosider functions for creating "tag/shield" text that may add 
+#       square-grackets around the text, offer padding/centering to a fixed size
+#       and setting background and foreground colors appropriately to create 
+#       something that might approximate the tags/shields used in some web 
+#       pages / interfaces
+###############################################
+
+################################################################################
+################################################################################
+
+# TODO: rename echo. to printf. and adjust API to match.
+echo.()   { bash.show_functions 'echo\.'   ; }
+util.()   { bash.show_functions 'util\.'   ; }
+source.() { bash.show_functions 'source\.' ; }
+ui.()     { bash.show_functions 'ui\.'     ; }
+
+#####
+# the source.required() and source.requested() functions require the echo.*()
+# functions below that in turn require codes that are defined in bash.ansi
+#####
+source "${DOTFILES_DIR:-${HOME}/.dotfiles}"/bash.ansi
+
+################################################################################
+################################################################################
+# functions for echoing of status.
+#
+# NOTE: In all of these functions, the current status ($?) is saved on entry 
+#       and restored before return.
+#       Because of this, using these in a compound bash conditional may be 
+#       confusing/problematic and needs to be done carefully (and likely with 
+#       additional documentation at the point of use).
+#
+#       E.g. 
+#       [[ $(statement_that_might_fail) ]] || echo.error "oops" && return 2
+#       
+#       will not do work in the way that would usually be expected because 
+#       echo.error "oops" will return with the error that was present on entry
+#       from $(statement_that_might_fail) rather than with success.
+################################################################################
+################################################################################
+
+###############################################
+# utility function for formatting output of logging style messages.
+# (Implementation method for echo_debug(), echo_info(), etc. functions below.)
+#
+# Usage: echo_log <${_fg[color]}> <status_type> <status_text>...
+#   EX:  echo_log ${fg_red}> OOPS i did a boo-boo
+###############################################
+echo.log_msg()
+{
+    local entry_status=$?
+    # cannot use util.assert_argc here because on failure it would in turn call
+    #  echo_error() which would call echo_log_msg() again.
+    if [[ $# -ne 4 ]]; then
+        echo -e "${_bg[red]}${FUNCNAME[0]}() requires 4 arguments.${_bg[dflt]}\n" \
+                "${_attr[bold]}USAGE:\n" \
+                "${_attr[none]}${FUNCNAME[0]} <file descriptor #> " \
+                   "<\"color attributes\"> <\"STATUS_TYPE_TEXT\">" \
+                   " <\"status message.\">"
+        return 2
+    fi
+
+    fd=${1}
+    color="${2}"
+    status_type="${3}"
+    message="${4}"
+
+    echo -e "${color}${_attr[bold]}${status_type}:" \
+            "${_attr[bold_off]} ${message}${_attr[colors_dflt]}"  >&"${fd}"
+    return ${entry_status}
+}
+
+###############################################
+# All of these:
+# 1) output the text to stderr (2)
+# 2) restore the error state ($?) on exit that was present on entry.
+###############################################
+echo.debug()   { echo.log_msg 2 "${_fg[gray]}"   "DEBUG"       "$*"; }
+echo.info()    { echo.log_msg 2 "${_fg[gray]}"   "INFO"        "$*"; }
+echo.warning() { echo.log_msg 2 "${_fg[yellow]}" "WARNING"     "$*"; }
+echo.error()   { echo.log_msg 2 "${_fg[red]}"    "ERROR"       "$*"; }
+echo.fatal()   { echo.log_msg 2 "${_bg[red]}"    "FATAL ERROR" "$*"; }
+
+##############################################
+# outputs the parameter(s) in <bold>
+# with a line of '#' above and below
+# all in <green>
+###############################################
+echo.banner()
+{
+   echo -en "${_bg[dflt]}${_fg[green]}"
+   echo -e  "#######################################################"
+   echo -en "${*}\n"
+   echo -e  "#######################################################"
+   echo -en "${_fg[dflt]}"
+}
+
+###############################################
+# echoes all parameters and prompts for confirmation.  
+# returns "true" if they confirm, or "false" if they do not.
+###############################################
+util.confirm()
+{
+    [[ ${#} -eq 0 ]] && echo "${*}"
+    read -rp "CONTINUE?: [\"${_attr[bold]}YES${_attr[bold_off]}\"]" confirmation
+    if [[ "${confirmation}" != "YES" ]]; then
+        echo "ABORTING"
+        return 1;
+    fi
+}
+
+util.kbdWait()
+{
+    # NOTE: spamalot is a dummy variable who value is not intended for use.
+    # SC2034: spamalot appears unused. Verify use (or export if used externally).
+    # shellcheck disable=SC2034
+    read -r spamalot
+}
+
+############################################################
+############################################################
+# functions for managing use of "source" for files.
+# and optimizing to ensure against recursion and redundant (unnecessary)
+# includes / sourcing.
+############################################################
+############################################################
+
+###########################################
+# will attempt to "source" a filename parameter and set the status to indicate
+# success or failure.
+#
+# Includes optimization logic to avoid overhead of redundantly sourcing the 
+# same file.
+###########################################
+source.once()
+{
+    # declare here in case explicitly unset.
+    declare -gA _sourced
+    local filepath="${1}"
+    local filename="${filepath##*/}"
+    if [[ -z ${_sourced[${filename}]} ]]; then
+        [[ ! -f "$filepath" ]] && return 1
+        builtin source "$filepath"
+        _sourced[${filename}]="true"
+    fi
+    return 0
+}
+
+# source() { source.once "${*}"; }
+
+source.force()
+{
+    # declare here in case explicitly unset.
+    declare -gA _sourced
+    local filepath="${1}"
+    local filename="${filepath##*/}"
+    unset '_sourced["${filename}"]'
+    source.once "${@}"
+}
+
+###########################################
+# source a file and supress any warning and/or status if it is not present.
+###########################################
+source.optional()
+{
+   local filename="${1:?}"
+   source.once "${filename}"
+   true  # unconditionally indicate success
+}
+
+###########################################
+# source all files in a specified directory that have a .sh extension.
+# will return 1 if the directory does not exist.
+###########################################
+source.dir()
+{
+    local directory="${1:?}"
+    local filename
+    [[ ! -d "${directory}" ]] && return 1;
+    # TODO: verify that this will also find ".*" files, and fix if it doesn't.
+    for filename in "${directory}"/*.sh ; do
+        source.once "${filename}"
+    done
+}
+
+###########################################
+# source a file and generate an error message if it is not present.
+###########################################
+source.required()
+{
+   local filename="${1:?}"
+   source.once "${filename}" \
+   || echo.error "${FUNCNAME[0]}: \"${filename}\" was not found!"
+}
+
+###########################################
+# source a file and generate warning message if it is not present.
+###########################################
+source.requested()
+{
+   local filename="${1:?}"
+   source.once "${filename}" \
+   || echo.warning "${FUNCNAME[0]}: \"${filename}\" was not found!"
+}
+
+
+################################################################################
+################################################################################
+# miscellaneous utility functions
+################################################################################
+################################################################################
+
+###############################################
+# determine if this is an interactive shell
+# I.e. see if "i" (interactive) is in the list of options for the shell.
+###############################################
+util.is_interactive() { [[ $- == *i* ]]; }
+
+###############################################
+###############################################
+util.is_var_name()
+{
+    # ${!1:?} would produce an error message from the shell that could not be
+    # redirected, and we want to fail silently (but with $?=1) in that case.
+    local varName="${1:?}"  # we want the error message if no parameter set
+    local failure="🚫"      # set to a symbol we expect to not be used as a name
+    local varValue="${!varName:-$failure}"
+    [[ "$varValue" != "$failure" ]]
+}
+
+
+###############################################
+# Execute the parameters as a command, and IFF the command returns a non-zero
+# return value ($?) then echo the command that was attempted with
+# echo.error() and "exit" (NOT "return") with a status of "1".
+# NOTE: this should only be used from within a script, if this is called from
+#       a shell and the command fails, it will cause the shell to exit.
+# NOTE: a hole in this logic is that if the command that is "tried" explicitly
+#       calls return (or exit) it will short-circuit the code that would
+#       otherwise be testing the result.
+###############################################
+util.eval_require_success()
+{
+    util.assert_argc_ge 1 $# "${FUNCNAME[0]}" || return 2;
+    eval "$*" || exit "$(echo.error "[$?] CANNOT: $*")"
+}
+
+
+###############################################
+# only valid (useful) when running in a script
+###############################################
+# NOTE: if no path, then ${0%/*} returns the script-name.
+# NOTE: alternatively, can use "basename" and "dirname" utilities.
+util.script_path() { echo -n "${0%/*}"; } 
+util.script_name() { echo -n "${0##*/}"; }
+
+###############################################
+# return status of 0 if pid exists or 1 if it does not.
+###############################################
+util.is_pid_running() { ps -p "${1:?}" >/dev/null 2>&1; }
+
+###############################################
+# tests for existance of a priority ordered list of candidate executable names
+# and returns the full path to the first one of the list that it finds.
+###############################################
+util.which_of_these()
+{
+    local candidate
+    [[ ${#} = 0 ]] && echo.error "missing arguments" && return 1
+
+    for candidate in "${@}" ; do
+        command which "${candidate}" && return 0
+    done
+    return 1
+}
+
+
+################################################################################
+################################################################################
+# ansi / text output and status funcitons
+################################################################################
+################################################################################
+
+###############################################
+# print a line across the width of the terminal
+###############################################
+ui.make_line_of() 
+{ printf '%*s\n' "${COLUMNS:-$(tput cols)}" '' | tr ' ' "$1"; }
+
+ui.make_line() 
+{ ui.make_line_of '-'; }
+
+###############################################
+# small functions to create "spinner"s that spins as long as one or more <pid>
+# parameters are running.  The functions are "blocking" and do not return until
+# all of the <pid> parameters have exited.
+#
+# USEFUL NOTE: ${!} should evaluate to the PID of the last background process 
+#              started.
+###############################################
+
+##################
+# util.generic_spin_wait()'s primary purpose is as the underlying implementation
+# or the other util.spinner_*() functions, but it can be used directly to 
+# implement other "spinners".
+#
+# displays the characters in the first argument in sequence followed by 
+# backspace character(s) that are parameterized as the second parameter (because 
+# unicode characters are likely to require 2 backspaces).
+##################
+ui.generic_spin_wait()
+{
+    local spinner spinnerBack
+   util.assert_argc_ge 3 $# "${FUNCNAME[0]}" \
+              "USAGE:\n${FUNCNAME[0]} \"spin characters\" \"bs\" pid [pid...] " \
+       || return 1;
+
+   spinner="${1}"
+   spinnerBack="${2}"
+   shift; shift
+
+   ((spinnerLen=${#spinner}-1))
+   for processId in "$@" ; do
+      while util.is_pid_running "${processId}" ; do
+         for i in $(seq 0 ${spinnerLen}) ; do
+            echo -n "${spinner:$i:1}"
+            sleep 0.1
+            echo -en "${spinnerBack}"
+         done
+      done
+   done
+}
+
+
+ui.spinner_wait()
+{
+    local spinner spinnerBack
+   util.assert_argc_ge 1 $# "${FUNCNAME[0]}" "USAGE:\n${FUNCNAME[0]} pid [pid...] " \
+       || return 1;
+
+   spinner="|/-\\"
+   spinnerBack="\010"
+
+   ui.generic_spin_wait "${spinner}" "${spinnerBack}" "$@"
+}
+
+
+ui.spinner_clock_wait()
+{
+    local spinner spinnerBack
+   util.assert_argc_ge 1 $# "${FUNCNAME[0]}" "USAGE:\n${FUNCNAME[0]} pid [pid...] " \
+       || return 1;
+
+   spinner="🕛🕧🕐🕜🕑🕝🕒🕞🕓🕟🕔🕠🕕🕡🕖🕢🕗🕣🕘🕤🕙🕥🕚🕦"
+   spinnerBack="\010\010" # two backspace needed for unicode (2 bytes)
+
+   ui.generic_spin_wait "${spinner}" "${spinnerBack}" "$@"
+}
+
+
+###############################################
+# contdown timer for number of seconds specified as a parameter.
+# 
+# "stolen" from Ashish Matthew with modifications...
+###############################################
+ui.countdown()
+{
+    local date1
+   date1=$(($(date +%s) + ${1:?}));
+   while [ "$date1" -ge "$(date +%s)" ]; do
+       echo -ne "$(date -u --date @$((date1 - $(date +%s))) +%H:%M:%S)\r";
+       sleep 0.1
+   done
+}
+
+
+###############################################
+# stopwatch timer until all specified PID arguments have completed.
+# 
+# "stolen" from Ashish Matthew with modifications...
+###############################################
+ui.stopwatch()
+{
+    local date1 processId
+    date1="$(date +%s)"
+    for processId in "$@" ; do
+        while util.is_pid_running "${processId}" ;  do
+            echo -ne "$(date -u --date @$(($(date +%s) - date1)) +%H:%M:%S)\r";
+            sleep 0.1
+        done
+    done
+}
+
+###############################################
+# flash the terminal window until a key is pressed.
+# intended for use at the end of long-running
+# scripts to allert on completion.
+###############################################
+ui.flasher()
+{
+   while true ; do
+      echo -n "${_reverseVideo}"
+      sleep 0.1
+      echo -n "${_reverseVideoOff}"
+      read -r -s -n1 -t1 && break
+   done
+}
+
+
+##############################################
+# concatenate all arguments with no spaces or other delimiters.
+##############################################
+util.concat() { printf "%s" "${@}"; }
+
+###############################################
+# cache a key-value pair in an exported environment variable
+# uses a provided function and arguments (lambda) to generate the value 
+# IFF it does not already exist.
+#
+# NOTE : be very careful regarding the key-name, both that it avoids collisions
+#        with other users of the cache, and also that it is unique for whatever
+#        factors could influence the execution of the lambda.
+#        E.g. cwd, environment variables, etc.
+#
+# @return the cached or generated value.
+# Usage:
+# util.cache key_name <lambda function and arguments>
+#
+# TODO / NOTE : Still requires that the "key_name" be properly escaped such that 
+#       it is valid as a key in a bash associative array.
+# TODO: associative arrays are only available with bash >= 4.0.  Need to add a
+#       version test and bypass the cache when associative arrays are
+#       unavailable or otherwise escape the key for use as an environment
+#       variable directory and bypass associative arrays.
+# TODO: consider parameterizing also on the name of the calling function
+#       to provide stronger assurances against collisions between uses.
+###############################################
+declare -Ax _UTIL_CACHE_VALUES
+
+util.cache()
+{
+    # util.assert_argc_ge 2 $# $0
+    local key_name lambda # key_cache_name
+    key_name="$1"
+    # key_cache_name="$(util.concat _util_cache_ ${key_name})"
+    shift
+    lambda="${*}"
+    # echo before: _UTIL_CACHE_VALUES[ \"${key_name}\" ]=\"${_UTIL_CACHE_VALUES[ "${key_name}" ]}\"
+    echo "${_UTIL_CACHE_VALUES[ "${key_name}" ]:="$(${lambda})"}"
+    # echo after: _UTIL_CACHE_VALUES[ \"${key_name}\" ]=\"${_UTIL_CACHE_VALUES[ "${key_name}" ]}\"
+}
+
+util.cache.stats()
+{
+    echo "util.cache count is   : " "${#_UTIL_CACHE_VALUES[@]}"
+    echo "util.cache keys are   : " "${!_UTIL_CACHE_VALUES[@]}"
+    echo "util.cache values are : " "${_UTIL_CACHE_VALUES[@]}"
+}
+
+###############################################
+# INFORMATIONAL: 
+# from kvainstein /src/scripts/common.sh
+###############################################
+# ui.showBanner () {
+#         # util.assert_argc 1 $# "<possibly multiword message>"
+#         local message="$@"
+#         local messageLength=${#message}
+#         local screenWidth=`tput cols`
+#         local bannerWidth=$(( screenWidth-4 ))
+#         # Want 2 delimiters, like 2 bookends surrounding N books on a shelf; 
+#         # 1 space betweeen each delimiter and message, hence the '+2'.
+#         local delimiterWidth=$(( (bannerWidth - (messageLength+2)) / 2 ))
+#         printf "\n\n%s\n" `catConsecutiveSymbols $bannerWidth`
+#         printf "%s %s %s\n" `catConsecutiveSymbols $delimiterWidth` "$message" `catConsecutiveSymbols $delimiterWidth`
+#         printf "%s\n" `catConsecutiveSymbols $bannerWidth`
+# }
+#
+### from https://www.shellscript.sh/tips/banner/
+# ui.banner()
+# {
+#     echo "+------------------------------------------+"
+#     printf "| %-40s |\n" "`date`"
+#     echo "|                                          |"
+#     printf "|`tput bold` %-40s `tput sgr0`|\n" "$@"
+#     echo "+------------------------------------------+"
+# }
+
+################################################################################
+################################################################################
+# validation (assertion) functions.
+################################################################################
+################################################################################
+
+# TODO: assert that the first argument matches a subsequent argument.
+util.assertOneOf()
+{
+    TODO
+#    local toFind candidate
+#    toFind="${1:?}"
+#    shift
+#     foreach candidate in
+#        [[ "$tofind"=="$candidate" ]] && return 0;
+#     endfor ?
+    return 1;
+}
+
+
+util.assert_notEmptyFile()
+{
+    filename="${1:?}"
+    if [[ ! -e ${filename} ]]; then 
+        echo.error "file: \"${filename}\" does not exist.\n"
+        return 1
+    elif [[ ! -f ${filename} ]]; then 
+        echo.error "file: \"${filename}\" is not a file.\n"
+        return 1
+    elif [[ ! -r ${filename} ]]; then
+        echo.error "file: \"${filename}\" is not readable.\n"
+        return 1
+    elif [[ ! -s ${filename} ]]; then 
+        echo.error "file: \"${filename}\" is empty.\n"
+        return 1
+    fi
+}
+
+###############################################
+# util.assert_argc(), 
+# util.assert_argc_le(), 
+# util.assert_argc_ge()
+#
+# takes 3 (or more) parameters,
+# $1: the expected (exact, minimum, or maximum) number of arguments 
+# $2: $# (number of arguments in the context of the caller)
+# $3: $0 (function name in the context of the caller)
+#
+# any additional arguments that should be output as a message if the test
+#     fails.
+#
+# If the number of arguments does not match, then an error message is output an
+# a status code of 1 is returned.  If util.assert_argc is called with an invalid
+# number of parameters then 2 will be returned.
+#
+# USAGE:
+# # if validating a function's parameters
+# util.assert_argc 1 $# "${FUNCNAME[0]}" || return $?
+# # if validating a shell-script's parameters
+# util.assert_argc 1 $# $0 || exit $?
+#    or
+# util.assert_argc 1 $# "${FUNCNAME[0]}" "USAGE:\n${FUNCNAME[0]} <argument>" || return $?
+###############################################
+util.assert_argc()
+{
+    local expectedArgc argc callerName extraMsg
+   if [[ $# -lt 3 ]]; then
+       echo.error "${FUNCNAME[0]}() requires at least 3 arguments."
+       return 2
+   fi
+   if [[ $2 -ne $1 ]]; then
+       expectedArgc=$1
+       argc=$2
+       callerName="$3"
+       shift; shift; shift;
+       extraMsg="$*"
+       echo.error "invalid number of parameters for \"${callerName}\".\n" \
+                  "expected ${expectedArgc} parameters, found ${argc}"
+       if [[ "${extraMsg}" != "" ]]; then
+           echo -e "${extraMsg}"
+       fi
+       return 1
+   fi
+}
+
+util.assert_argc_le()
+{
+    local expectedArgc argc callerName extraMsg
+   if [[ $# -lt 3 ]]; then
+       echo.error "${FUNCNAME[0]}() requires at least 3 arguments."
+       return 2
+   fi
+   expectedArgc=$1
+   argc=$2
+   callerName="$3"
+   shift; shift; shift;
+   extraMsg="$*"
+   if [[ ${argc} -gt ${expectedArgc} ]]; then
+       echo.error "invalid number of parameters for \"${callerName}\".\n" \
+                 "  expected at most ${expectedArgc} parameters, found ${argc}"
+       if [[ "${extraMsg}" != "" ]]; then
+           echo -e "${extraMsg}"
+       fi
+       return 1
+   fi
+}
+
+util.assert_argc_ge()
+{
+    local expectedArgc argc callerName extraMsg
+   if [[ $# -lt 3 ]]; then
+       echo.error "${FUNCNAME[0]}() requires at least 3 arguments."
+       return 2
+   fi
+   expectedArgc=$1
+   argc=$2
+   callerName="$3"
+   shift; shift; shift;
+   extraMsg="$*"
+   if [[ ${argc} -lt ${expectedArgc} ]]; then
+       echo.error "invalid number of parameters for \"${callerName}\".\n" \
+                 "  expected at least ${expectedArgc} parameters, found ${argc}"
+       if [[ "${extraMsg}" != "" ]]; then
+           echo -e "${extraMsg}"
+       fi
+       return 1
+   fi
+}
+
+# NOTE: that this variant takes an extra parameter to specify the size range.
+util.assert_argc_between()
+{
+     local expectedArgc_lower expectedArgc_upper argc callerName extraMsg
+     if [[ $# -lt 4 ]]; then
+         echo.error "${FUNCNAME[0]}() requires at least 4 arguments."
+         return 2
+     fi
+     expectedArgc_lower=$1
+     expectedArgc_upper=$2
+     argc=$3
+     callerName="$4"
+     shift; shift; shift; shift
+     extraMsg="$*"
+     if [[ ${argc} -lt ${expectedArgc_lower} ]] || \
+        [[ ${argc} -gt ${expectedArgc_upper} ]] ; then
+         echo.error "invalid number of parameters for \"${callerName}\".\n" \
+                    "expected between ${expectedArgc_lower} and " \
+                    "${expectedArgc_upper} parameters,\nfound ${argc}" \
+                    "\n${extraMsg}"
+         return 1
+     fi
+}
+
+if [[ "${UNAME}" == "Darwin" ]]; then
+    util.desktop_hide()
+    {
+        defaults write com.apple.finder CreateDesktop -bool false
+        killall Finder
+    }
+
+    util.desktop_show()
+    {
+        defaults write com.apple.finder CreateDesktop -bool true
+        killall Finder
+    }
+fi #if darwin
+
+fi # end of include guard
+

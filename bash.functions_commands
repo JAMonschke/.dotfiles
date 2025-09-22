@@ -1,0 +1,643 @@
+# SC1090: can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# SC2288: This is interpreted as a command name ending with '.'. Double check
+#         syntax.
+# shellcheck disable=SC2288
+
+# include guard
+filename="bash.functions_commands"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+source.required "${DOTFILES_DIR:?}"/bash.functions_util
+source.required "${DOTFILES_DIR:?}"/bash.ansi
+
+################################################################################
+################################################################################
+# command line utility functions and
+#
+# Implementations for :
+#   bash.
+#   brew.
+#   find.
+#   man.   (on Darwin/macOS only)
+#   show.
+#
+# NOTES: (implementation possabilities and issues)
+# -- see "eza" also (an enhanced `ls` for colorization that is "git" aware.
+# -- stolen "ls" like function to output git branch for each file
+# lg ()
+# {
+#     ls -alF "$@" \
+#     |awk '{match($0,/^(\S+\s+){8}(.+)$/,f);b="";c="git -C \""f[2]"\" branch 2>/dev/null";while((c|getline g)>0){if(match(g,/^\* (.+)$/,a)){b="("a[1]")"}};close(c);print$0,b}'
+# }
+#
+################################################################################
+################################################################################
+
+bash.() { bash.show_functions 'bash\.' ; }
+find.() { bash.show_functions 'find\.' ; }
+show.() { bash.show_functions 'show\.' ; }
+brew.() { bash.show_functions 'brew\.' ; }
+
+
+#########################
+# short-circuit to indicate that a function is not yet implemented
+#########################
+TODO()   { echo.error "Not yet implemented"; return 2; }
+
+
+################################################################################
+################################################################################
+# brew.* functions
+################################################################################
+################################################################################
+brew.tap_info()
+{
+    brew tap-info ${1} --json  | jq -r '.[]|(.formula_names[],.cask_tokens[])'
+}
+
+
+################################################################################
+################################################################################
+# bash.* functions
+#
+# TODO: "env" also shows exported functions which I need to filter.
+# TODO: "show.env" is broken with regard to multi-line variable values
+#       (e.g. functions) because of line oriented " | sort".
+#
+# NOTE: From "CVU the magazine of the accu" vol. 37, issue 4 (September 2025)
+#       "Bash Shell" by Ian Bruntlett pg 8-9
+
+#   `compgen` (shell builtin) will comprehensively list the following:
+#       compgen -c # will list all the commands you could run.
+#       compgen -a # will list all the aliases you could run.
+#       compgen -b # will list all the built-ins you could run.
+#       compgen -k # will list all the keywords you could run.
+#       compgen -A function # will list all the Bash functions you could run.
+#       compgen -A function -abck # will list EVERYTHING you could run.
+################################################################################
+################################################################################
+
+#########################
+# clear the include guard flags and then (re)source ~/.bash_profile (again):
+#
+# NOTE: Any functions or variables that were removed will still remain until the
+#       next login, or until manually `undef`ed. Any variables that were marked
+#       as "readonly" will also not reflect any changes to these script files,
+#       and will retain their previous values until the next login.
+#########################
+bash.init()
+{
+    local filepath filename
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}"
+
+    # declare here in case explicitly unset.
+    declare -gA _sourced
+
+    if [[ ${#} -eq 0 ]]; then
+        unset _sourced
+        source "${HOME}"/.bash_profile
+        echo "(re)sourced ${HOME}/.bash_profile"
+    else
+        filepath="${1}"
+        [[ ! -f ${filepath} ]] \
+        && echo.error "no file \"${filepath}\"" \
+        && return 1
+
+        filename="${filepath##*/}"
+        unset '_sourced["${filename}"]'
+        source.once "${filepath}"
+        echo "(re)sourced \"${filepath}\""
+    fi
+}
+
+
+#########################
+# Clear the shells cache of files to ensure that it picks up modifications to
+# any files currently present in the cache.
+#########################
+bash.clear_hash()        { hash -r; }
+
+
+#########################
+# output values of bash internal variables
+# (see ls_* aliases in .bash_aliases)
+# TODO: on output, discriminate between empty and unset variables.
+#########################
+bash.bash_vars()
+{
+    for bash_var in \
+        BASH BASHOPTS BASHPID BASH_ARGV0 BASH_COMMAND BASH_COMPAT \
+        BASH_EXECUTION_STRING BASH_LOADABLE_PATH BASH_SUBSHELL BASH_VERSION \
+        BASH_XTRACEFD CHILD_MAX CDPATH COLUMNS DIRSTACK \
+        EDITOR EMACS ENV EPOCHREALTIME EPOCHSECONDS EUID EXECIGNORE FCEDIT \
+        FIGNORE FUNCNEST GLOBIGNORE histchars HISTCMD HISTCONTROL HISTFILE \
+        HISTFILESIZE HOSTIGNORE HISTSIZE HISTTIMEFORMAT HOME HOSTFILE HOSTNAME \
+        HOSTTYPE IFS IGNOREEOF INPUTRC INSIDE_EMACS LANG LC_ALL LC_COLLATE \
+        LC_CTYPE LC_MESSAGES LC_NUMERIC LC_TIME LINENO LINES MACHTYPE MAIL \
+        MAILCHECK MAILPATH OLDPWD OPTARG OPTIND OPTERR OSTYPE PATH \
+        POSIXLY_CORRECT PPID PROMPT_COMMAND PROMPT_DIRTRIM PS0 PS1 PS2 PS3 PS4 \
+        PWD RANDOM READLINE_LINE READLINE_POINT REPLY SECONDS SHELLOPTS SHLVL \
+        TIMEFORMAT TMOUT TMPDIR UID 
+    do
+       # shellcheck disable=SC2154
+       printf "${_fg[green]}%s${_fg[dflt]}=\"%s\"\n" "${bash_var}" "${!bash_var}"
+       # echo -e "${bash_var}=\"${!bash_var}\""
+    done
+
+    printf "\n"
+    # appends a group separating new-line, only if the symbol is not undefined.
+    bash.show_var_array BASH_ALIASES  && printf "\n"
+    bash.show_var_array BASH_ARGC     && printf "\n"
+    bash.show_var_array BASH_ARGV     && printf "\n"
+    bash.show_var_array BASH_CMDS     && printf "\n"
+    bash.show_var_array BASH_ENV      && printf "\n"
+    bash.show_var_array BASH_LINENO   && printf "\n"
+    bash.show_var_array BASH_REMATCH  && printf "\n"
+    bash.show_var_array BASH_SOURCE   && printf "\n"
+    bash.show_var_array BASH_VERSINFO && printf "\n"
+    bash.show_var_array COPROC        && printf "\n"
+    bash.show_var_array DIRSTACK      && printf "\n"
+    bash.show_var_array FUNCNAME      && printf "\n"
+    bash.show_var_array GROUPS        && printf "\n"
+    bash.show_var_array MAPFILE       && printf "\n"
+    bash.show_var_array PIPESTATUS    && printf "\n"
+}
+
+
+bash.aliases()
+{
+    # _fg referenced but not assigned
+    # shellcheck disable=SC2154
+    # prefer ${variable//search/replace} -- with $(command )?
+    # shellcheck disable=SC2001
+    command alias | sed "s/^alias/${_fg[green]}bash alias:${_attr[colors_dflt]}/g"
+}
+
+
+bash.help()
+{
+    # TODO: If parameter supplied, get help on that parameter, use `bash -c help`
+    #       only when no parameter supplied.
+    bash -c help;
+}
+
+
+bash.builtins()
+{
+    enable -p | sed "s/^enable/${_fg[green]}bash builtin:${_attr[colors_dflt]}/g"
+}
+
+
+bash.opt() { shopt 2>/dev/null | grep -e "^${1:?} "; }
+
+
+bash.opts()   { shoopt 2>/dev/null; }
+
+
+#########################
+# which() implemented with "command type -a" which will
+# show ALL executables in the path with the name (not just the first) as well
+# as aliases or functions with the name.
+#########################
+bash.which() { type -a "${1:?}" 2>/dev/null; }
+
+
+#########################
+# implementation helper function for use in show.* functions below that will
+# filter lines from the output of a function to exclude lines not containing a
+# substring argument.
+#
+# Used in the context of a function that when called with no parameters will
+# provide a line oriented list of outputs, but which when called with a filter
+# argument will use this function to call itself recursively, but applying the
+# specified filter text.
+#
+# -- if there is a usage error: returns 2
+
+#
+# USAGE:
+#     # if a filter argument is supplied:
+#     # then this will call the ${FUNCNAME[0]} parameter recursively with no
+#     # filter argument, then take that output and filter the output of that
+#     call against the specified filter parameter
+#      my_func()
+#      {
+#          util.assert_argc_le 1 $# "${FUNCNAME[0]}" || return 2
+#          if [[ ${#} -eq 1 ]]; then
+#              _apply_optional_filter ${FUNCNAME[0]} "${@}";
+#          else
+#              # execute body of function otherwise.
+#          fi
+#      }
+#
+# TODO: returns 0 or 1 indicating whether or not the string was found.
+# TODO: extend to allow specification of multiple filters
+#       ( treating as logical OR rather than AND ).
+#       implement by building the string argument to 'sed -n "..." ' dynamically
+# TODO: add proper escaping of the string "${sub_string}"
+#########################
+_apply_optional_filter()
+{
+    local func_name
+    local sub_string_filter
+    local raw_output
+    local filtered_output
+    util.assert_argc 2 $# "${FUNCNAME[0]} \"filter_argument\"" || return 2
+    func_name="${1:?}"
+    sub_string_filter="${2}"
+    raw_output="$( ${func_name} )"
+    filtered_output=$( echo "${raw_output}" | sed -n "/${sub_string_filter}/p" )
+    if [[ -n $filtered_output ]]; then
+        echo "${filtered_output}"
+    else
+        return 1
+    fi
+}
+
+
+#########################
+# with no parameters, this will show all environment variables. If a parameter
+# is supplied, then only variables whose names or values contain that text will
+# be shown.
+#########################
+bash.show_env()
+{
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" || return 2
+    if [[ ${#} -eq 1 ]]; then
+        _apply_optional_filter "${FUNCNAME[0]}" "${@}"
+    else
+        command env \
+        | tr '\033' '\\e' \
+        | sort \
+        | sed -e "s/^/${_fg[green]}/g" -e "s/=/=${_attr[colors_dflt]}/g"
+    fi
+}
+
+
+#########################
+#########################
+bash.show_var()
+{
+    # if [[ "${1:?}" is the name of a simple variable ]]; then
+      printf "${_fg[green]}%s=${_fg[dflt]}\"%s\"\n" "${1:?}" "${!1}"
+    # else #variable is an array.
+    #   # TODO: sort keys before looping
+    #   declare -n array="${1}" # declare that array is an alias.
+    #   for key in $( echo "${!array[@]}" | tr " " "\n" | sort -n | tr "\n" " " ); do
+    #       echo -e "${1}[${key}]=\"${array[${key}]}\""
+    #   done
+    # fi
+
+    # TODO: this variation will replace "<esc>" with "\e".
+    # NOTE: When pipes "|" are used, the returned status will reflect the status
+    #       of the last command in the sequence.  Where we want the returned 
+    #       status to reflect the status from a different command in the 
+    #       sequence we have to make (careful and appropriate) use of command 
+    #       substitution.  I.e. "> >(command)" or "< <(command)"
+    # declare -p "${1:?}" 2>/dev/null 1> >(tr "\033" "\\e")
+
+    # TODO: Complete code below and use it to replace the line above. This will
+    #       need to use `sed` (and maybe `tr`) to split the string returned by
+    #       `declare` based on the first occurrence of '='.
+    #       Ex:  declare <attributes> -- var_name="var value"
+#    local declaration="$(declare -p "${1:?}" 2>/dev/null)"
+#    local declaration_left="${declaration}"  # left part, split on "="
+#    local declaration_right="${declaration}" # right part, split on "="
+#    printf "${_fg[green]}%s=${_fg[dflt]}\n" "${declaration_left}" \
+#                                            "${declaration_right}"
+}
+
+
+#########################
+# show.vars [filter]
+# -- if no filter argument is specified, then show all variables.
+# -- if a filter argument is specified, then show all variables whose name
+#    includes that text.
+#########################
+bash.show_vars()
+{
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" || return 2
+    if [[ ${#} -eq 1 ]]; then
+        _apply_optional_filter "${FUNCNAME[0]}" "${@}"
+    else
+        echo -e "$(set -o posix ; set )" | tr '\033' '\\e' 
+    fi
+}
+
+#########################
+# list an array variable's keys and values, one entry per line.
+# returns 2 if the symbol is not defined (with suppressed text output).
+# TODO: return 3 if the symbol is defined but is not an array.
+#########################
+bash.show_var_array()
+{
+    # short-circuit and return error if variable is not defined (at all)
+    declare -p "${1}" 1>/dev/null 2>&1 || return 2
+    # TODO: verify that symbol type is an array and short-circuit if not.
+
+    # TODO: sort keys before looping
+    declare -n array="${1}" # declare that "array" is an alias.
+    for key in $( echo "${!array[@]}" | tr " " "\n" | sort -n | tr "\n" " " ); do
+        echo -e "${_fg[green]}${1}[${key}]=${_fg[reset]}\"${array[${key}]}\""
+    done
+}
+
+#########################
+# show the full definition of a single function with the specified name.
+#########################
+bash.show_function()
+{
+    # declare -f will show the definition,
+    declare -f "${1:?}" 2>/dev/null
+    # declare -F will show where it is defined IFF extdebug is enabled.
+    if shopt extdebug &>/dev/null; then
+        declare -F "${1:?}" 2>/dev/null
+    else
+        shopt -s extdebug
+        declare -F "${1:?}" 2>/dev/null
+        shopt -u extdebug
+    fi
+}
+
+###########################
+# provide a listing of all functions INCLUDING functions starting with '_'
+# with an optional substring filter argument
+###########################
+bash.show_functions_()
+{
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" || return 2
+    if [[ ${#} -eq 1 ]]; then
+        _apply_optional_filter "${FUNCNAME[0]}" "${@}"
+    else
+        # sed -n "/^declare \-f _/p"
+        #     will include only function names starting with `_`
+        # sed "s/declare \-f/"....
+        #     will replace "declare -f "with "bash function:" in [green]
+        echo -e "$( declare -F )" \
+            | sed -n "/^declare \-f _/p" \
+            | sed "s/declare \-f/${_fg[green]}bash function:${_attr[colors_dflt]}/g"
+    fi
+}
+
+###########################
+# provide a listing of all functions EXCLUDING functions starting with '_'
+# with an optional substring filter argument
+###########################
+bash.show_functions()
+{
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" || return 2
+    if [[ ${#} -eq 1 ]]; then
+        _apply_optional_filter "${FUNCNAME[0]}" "${@}"
+    else
+        # sed "/^declare \-f _/d"
+        #     will exclude function names starting with `_`
+        # sed "s/declare \-f/"....
+        #     will replace "declare -f "with "bash function:" in [green]
+        echo -e "$( declare -F )" \
+        | sed -e "/^declare \-f _/d" \
+           -e "s/declare \-f/${_fg[green]}bash function:${_attr[colors_dflt]}/g"
+    fi
+}
+
+###########################
+# show all "meanings" for a single token/name/symbol from all show.*() contexts
+###########################
+bash.show()
+{
+    local -i found_count
+    (( found_count=0 ))
+
+    show.bash_opt   "${1:?}" && (( found_count+=1 ))
+
+    # results from "show.which" will include (in order of priority):
+    # -- aliases
+    # -- shell functions.
+    # -- builtin commands,
+    # -- all executables on the path,
+    bash.which "${1}" && (( found_count+=1 ))
+
+    # append the location of the function definition IFF it is a function.
+    if shopt extdebug &>/dev/null; then
+        declare -F "${1:?}" 2>/dev/null
+    else
+        shopt -s extdebug
+        declare -F "${1}" 2>/dev/null
+        shopt -u extdebug
+    fi
+
+    # show.var will show environment variables, but won't discriminate between
+    # environment variables and "other" variables so we want to call show.env
+    # before calling show.var and short-circuit if it succeeds.
+    bash.show_env "${1}" || bash.show_var "${1}" && ((found_count+=1))
+
+    if [[ $found_count -eq 0 ]]; then
+        echo "no symbol: \"${1}\" "
+        return 1
+    else
+        return 0
+    fi
+}
+
+
+################################################################################
+################################################################################
+# show.* functions
+################################################################################
+################################################################################
+
+#########################
+# show the "tag files" that I am currently adding into my git worktree and
+# repository directories.
+#########################
+# use find instead of ls
+# shellcheck disable=SC2012
+# shellcheck disable=SC2035
+# shellcheck disable=SC2164
+#show.git_dirs()
+#{
+#  if [[ -d "${HOME}"/git ]]; then
+#    echo "$( cd "${HOME}"/git; ls -d */* | sed '/\/main\//d'; )";
+#  else
+#    echo "NoGitDir"
+#  fi
+#}
+
+#########################
+# show the list of files that have been sourced in the current shell based
+# on explicitly setting of the include guard within the file, and/or use of
+# "source.*" functions defined in bash.functions_util
+#########################
+show.sourced()
+{
+    for key in $( echo "${!_sourced[@]}" | tr " " "\n" | sort -n | tr "\n" " " )
+    do
+        echo "${_fg[green]}sourced:${_fg[reset]} \"${key}\"";
+    done
+}
+# TODO: Refactoring to decouple this from the class definitions/implementations
+#       by creating two array variables, "_show_classes_cli" and
+#       "_show_classes_script" that we can use to register the classes at the
+#       points where those classes are implemented, then loop through the
+#       contents of those variables to generate the lists in the functions
+#       below.
+#       Also have _show.add_class_*() functions generate the className.()
+#       functions for each class.
+#       `_show.add_class_CLI() man`
+#       `_show.add_class_scripting() ansi`
+show.classes()
+{
+    printf "${_fg[green]}${_utf8[left_bracket]}Scripting Utilities:${_utf8[right_bracket]}${_fg[reset]}\n"
+    printf "ansi.\necho.\npathvar.\nprompt.\nsource.\nui.\nutil.\n"
+
+    # All man.* functions use tools that are unique to Darwin/macOS
+    if [[ "${UNAME}" == "Darwin" ]]; then
+        printf "man.\n"
+    fi
+
+    printf "${_fg[green]}${_utf8[left_bracket]}CLI Utilities:${_utf8[right_bracket]}${_fg[reset]}\n"
+    printf "bash.\nbrew.\nfind.\ngit.\nshow.\n"
+}
+
+
+show.class_methods()
+{
+      printf "${_fg[bright_green]}${_utf8[left_bracket]}Scripting Utilities:${_utf8[right_bracket]}${_fg[reset]}\n"
+      ansi.
+      printf "\n"
+      echo.
+
+      # All man.* functions use tools that are unique to Darwin/macOS
+      if [[ "${UNAME}" == "Darwin" ]]; then
+          man.
+          printf "\n"
+      fi
+
+      pathvar.
+      printf "\n"
+      prompt.
+      printf "\n"
+      source.
+      printf "\n"
+      ui.
+      printf "\n"
+      util.
+      printf "\n"
+
+      printf "\n${_fg[bright_green]}${_utf8[left_bracket]}CLI Utilities:${_utf8[right_bracket]}${_fg[reset]}\n"
+      bash.
+      printf "\n"
+      brew.
+      printf "\n"
+      find.
+      printf "\n"
+      git.
+      printf "\n"
+      show.
+}
+
+
+################################################################################
+################################################################################
+# man.* functions    (Currently, Darwin/macOS ONLY)
+# TODO: add new functions (for both environments)
+#       man.bash() # use bash.help
+#       man.man()  # man pages (with logic to deal with sections `man #`
+#       man.info() # Gnu `info` pages
+#       man.help() # to search all available man.*() functions for information.
+################################################################################
+################################################################################
+if [[ "${UNAME}" == "Darwin" ]] ; then
+    man.() { bash.show_functions 'man\.' ; }
+    # SC2145: Argument mixes string and array. Use * or separate argument.
+    # shellcheck disable=SC2145
+    man.x() { open x-man-page://"${@}"; }
+    man.pdf() { man -t "${@}" | open -f -a "Preview"; }
+    man.dash() { open dash://"${*}"; }
+    # shellcheck disable=SC2145
+    #man.docset() { open dash://${1}:{"${@}"}; }
+    man.docset() { open dash://"${1}:{${@}}"; }
+fi
+
+
+################################################################################
+################################################################################
+# find.* functions
+# NOTE: All find.* functions search recursively starting at the current
+#       directory.
+#
+# TODO: Revise to use `fd` and/or `rg` (ripgrep) when either/both are available
+#       and appropriate for the context.
+#       (`fd` is faster than find but with a simpler (and incompatible) syntax.)
+#       (`rg` is a very fast analog of `find -exec grep`)
+################################################################################
+################################################################################
+
+find.files() { find . -type f 2>/dev/null; }
+find.file() { find . -type f -name "${1:?}" 2>/dev/null; }
+
+
+find.executables() { find . -perm /111 -type f 2>/dev/null; }
+find.executable() { find . -perm /111 -type f -name "${1:?}" 2>/dev/null; }
+
+
+find.dirs() { find . -type d 2>/dev/null; }
+find.dir() { find . -type d -name "${1:?}" 2>/dev/null; }
+
+
+find.links() { find . -type l 2>/dev/null; }
+find.link() { find . -type l -name "${1:?}" 2>/dev/null; }
+
+
+find.text() 
+{ 
+    # find . -type f -exec fgrep -IHn "${1:?}" {} \; 2>/dev/null; 
+    rg --smart-case \
+       --with-filename \
+       --fixed-strings \
+       --line-number \
+       --unrestricted  \
+       "${1:?}" .
+}
+
+
+find.inCmake() 
+{ 
+    # --type cmake will find *.cmake and CMakeLists.txt files.
+    rg --smart-case \
+       --with-filename \
+       --fixed-strings \
+       --line-number \
+       --unrestricted \
+       --type cmake \
+       "${1:?}" .
+}
+
+
+find.inSource()
+{
+    # TODO: consider adding more source file extensions for other languages,
+    #       or making amenable to specification of searchable extensions via
+    #       1) an environment variable,
+    #       2) an "--option" to this command,
+    #       3) bespoke variants of this command
+    #
+    # NOTE: this function omits the --fixed-strings argument to `rg  so that
+    #       regex expressions may be used.
+
+    # find . -type f \( -name "*.c" -or -name "*.cpp" -or -name "*.h"  \
+    #      -or -name "CMakeLists.txt" \) \
+    #      -and -exec fgrep -IHn "${1:?}" {} \; 2>/dev/null
+    rg --smart-case \
+       --with-filename \
+       --line-number \
+       --unrestricted \
+       --type c \
+       --type cpp \
+       "${1:?}" .
+}
+
+fi # end of include guard

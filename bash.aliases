@@ -1,0 +1,84 @@
+# can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# include guard
+filename="bash.aliases"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+# NOTE: aliases are NOT expanded in non-interactive shells.  This is useful 
+#       when aliasing commands to add options that are useful from the command
+#       line but which might break scripts, but also means that alias should 
+#       NOT be used for anything that is intended to be used in a bash script.
+#
+#       However, use of ansi escape codes (for color, etc.) becomes more 
+#       problematic from within a shell function which makes some things that 
+#       are intended to be run strictly from the command line easier via 
+#       aliases.
+
+alias where="command which"
+
+# directory shortcuts 
+alias cd.back='cd ${OLDPWD}'
+alias   cd~='cd ~/'
+alias   cd..='cd ../'
+alias   cd...='cd ../../'
+alias   cd....='cd ../../../'
+alias   cd.....='cd ../../../../'
+alias   cd......='cd ../../../../../'
+
+# add discriminator characters and colorize the output if possible. 
+if [[ $( command ls --classify --color=auto /dev/null 2>/dev/null ) ]] ; then
+   # this should work for Linux
+   alias ls="ls --classify --color=auto"
+elif [[ $( command ls --classify --no-group /dev/null 2>/dev/null ) ]] ; then
+   # this should work for Darwin (OS X)
+   alias ls="ls --classify --no-group"
+elif [[ $( command ls --classify /dev/null 2>/dev/null ) ]] ; then
+   # fallback/fallthrough this should work anywhere
+   alias ls="ls --classify"
+fi
+
+if [[ "${UNAME}" == "Darwin" ]] && \
+   [[ $( command which tmux 2>/dev/null ) ]]; then
+    # start tmux in a mode that will allow ITerm2 to integrate with it.
+    # presumes that this is being run from an ITerm2 terminal window.
+    # see also: function tmux_() in bash.functions_commands
+    alias tmux.new="tmux -CC"
+    alias tmux.old="tmux -CC attach"
+fi
+
+# "keep files" when running gunzip
+alias gunzip="gunzip --keep"
+
+# Colorize the grep command output for ease of use (good for log files)
+alias grep="grep   --color=auto"
+alias egrep="egrep --color=auto"
+alias fgrep="fgrep --color=auto"
+
+alias ripgrep="rg"
+
+# use "bat" instead of "cat" if it is installed.
+# NOTE: bat fails if aliased to cat because it detects a recursion.
+#       I presume that implies that bat is using cat "behind the scenes".
+# [[ $( command which bat 2>/dev/null ) ]] && alias cat="bat"
+
+#[[ $( command which gmake 2>/dev/null ) ]] && alias make="gmake"
+
+# add -p to put multiple files in separate tabs
+if [[ $( command which "${EDITOR}" 2>/dev/null ) ]] \
+    && [[ ${EDITOR} == *vi* ]] 
+then
+   # shellcheck disable=SC2139
+   alias vi="${EDITOR} -p"     # one tab per file.
+   # shellcheck disable=SC2139
+   alias view="${EDITOR} -pR"  # one tab per file; Read Only
+fi
+
+# `gvim` is distinct from `vi` in that it runs in its own window.
+if [[ $( command which gvim 2>/dev/null ) ]]; then 
+   alias gvim="gvim -p"
+fi
+
+fi #end of include guard

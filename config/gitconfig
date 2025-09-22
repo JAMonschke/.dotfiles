@@ -1,0 +1,212 @@
+####################################
+# .gitconfig
+#
+# TODO: investigate what else can/should be configured from here.
+#       some other "sections" I have seen elsewhere include:
+#       [apply],
+#       [filter "lfs"],
+#       [include],
+#       [pack],
+#       [rebase],
+#       [rerere],
+#       [url "url to alias"]
+#
+# TODO: update all occurrences of BC3 to '/usr/bin/bcompare' and update all
+#       Beyond Compare related settings/options for the Linux environment
+#       -- try to determine the Linux/Darwin environment from within this
+#          file in order to support maintaining both configurations.
+###################################
+
+
+[user]
+	name = James Monschke
+	email = gcty2p8unv@snkmail.com
+
+[branch]
+    ### this was set in cpride's file.  I want to understand what it is doing
+    ### before setting it.
+    # autosetuprebase = always
+[pack]
+    ### these are set in cpride's file.  I want to understand what it is doing
+    ### before setting them.
+    # deltaCacheSize = 1073741824
+    #     #compression = 9
+    #     #windowMemory = 16g
+    # depth = 50
+    # window = 10
+    # deltaCacheLimit = 10000
+    # threads = 28
+[core]
+    askpass = ""
+    abbrev = 12
+
+    ### specify things that I want to exclude based on my local environment
+    ### that should not go into the repositorie's .gitignore
+	excludesfile = /Users/jmonschke/.config/git/gitignore_local
+
+    ### Treat spaces before tabs, lines that are indented with 8 or more 
+    ### spaces, and all kinds of trailing whitespace as an error.
+    whitespace = space-before-tab,indent-with-non-tab,trailing-space
+
+    ### available tools vary from my mac and the dev-cluster; these values are 
+    ### conservative fallback values that will be over-ridden by the environment
+    ### variables GIT_EDITOR and GIT_PAGER set in my bash.functions_git file.
+    pager = less -x4
+    editor = vim
+[diff]
+	tool = bc3
+[merge]
+    ### Include summaries of merged commits 
+    #### in newly created merge commit messages
+    log = true
+	tool = bc3
+[difftool "bc3"]
+    trustExitCode = true
+[mergetool "bc3"]
+    cmd = bc3 "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
+	trustExitCode = true
+    ### To remove unwanted .orig files
+    keepBackup = false
+[push]
+    default = simple
+	autoSetupRemote = true
+    # TODO: seen in other config files. investigate...
+    # default = current
+[pull]
+	rebase = false
+    # TODO: seen in other config files. investigate...
+    # default = current
+[color]
+    ui = auto
+    branch = auto
+    diff = auto
+    status = auto
+[color "branch"]
+    current = yellow reverse
+    local = yellow
+    remote = green
+[color "diff"]
+    meta = yellow bold
+    frag = magenta bold
+    old = red bold
+    new = green bold
+[color "status"]
+    added = yellow
+    changed = green
+    untracked = cyan
+[alias]
+
+    ##############################################################
+    ##############################################################
+    # aliases (from Splunk)
+    ##############################################################
+    ##############################################################
+
+    ##############
+    # Get the current branch name (not so useful in itself, but used in
+    # other aliases)
+    ##############
+    branch-name = "!git rev-parse --abbrev-ref HEAD"
+
+    ##############
+    # Push the current branch to the remote "origin", and set it to track
+    # the upstream branch
+    ##############
+    publish = "!f() { git push -u origin ${1-$(git branch-name)}; }; f"
+
+    ##############
+    # Delete the remote version of the current branch
+    ##############
+    unpublish = "!f() { git push origin --delete ${1-$(git branch-name)}; }; f"
+
+    ##############
+    # Unstage any files that have been added to the staging area
+    ##############
+    unstage = reset HEAD --
+    unadd = reset HEAD --
+
+    ##############
+    # Checkout our version of a file and add it
+    ##############
+    ours = "!f() { git checkout --ours $@; }; f"
+
+    ##############
+    # Checkout their version of a file and add it
+    ##############
+    theirs = "!f() { git checkout --theirs $@; }; f"
+
+    ##############
+    # Show commit log as a graph
+    ##############
+    graphlog = log --pretty=oneline -n 500 --graph --abbrev-commit
+
+    ##############
+    # Check to see how two commits are related.
+    ##############
+    is-ancestor = "!f() { \
+         if [ $# -ne 2 ]; then \
+             echo \"usage: git is-ancestor <REV1> <REV2>\n\"; \
+             exit 2; \
+         fi; \
+         if $( git merge-base --is-ancestor $1 $2 ); then \
+             echo \"$1 is an ancestor of $2\"; \
+             exit 0; \
+         elif $( git merge-base --is-ancestor $2 $1 ); then \
+             echo \"$2 is an ancestor of $1\"; \
+             exit 0; \
+         else \
+             echo \"$1 and $2 are not related\"; \
+             exit 1; \
+         fi \
+     }; f"
+
+    ##############################################################
+    ##############################################################
+    # <jmonschke local aliases>
+    ##############################################################
+    ##############################################################
+    bash-env = "!f() { env | sort ; };f"
+
+    ### provide list of git aliases or show definition of an alias
+    ls-alias = "!f() { git config -l | grep \"^alias.${1}\" | \
+                cut -c 7- | cut -d = -f 1 | sort -k 1 ; };f"
+
+    show-alias = "!f() { git config -l | grep \"^alias.${1}\" | cut -c 7- ; };f"
+
+    update = remote update
+
+#   TODO: revise Beyond Compare entries for linux environment and make 
+#   adaptable between Linux and Darwin
+
+#   bc-diff = difftool --dir-diff --no-symlinks
+#   bcomp   = difftool --dir-diff --no-symlinks
+    bc-diff = difftool --dir-diff 
+    bcomp   = difftool --dir-diff
+    file-diff = difftool --no-prompt
+
+    type = cat-file -t
+
+    dump = cat-file -p
+
+    rootdir = rev-parse --show-toplevel
+
+    all-branches = branch -av
+    branch-name = !git rev-parse --abbrev-ref HEAD 2>&1
+    branch-name2 = !git branch | grep "^*" | awk '{ print $2 }'
+
+######################
+### Aliases for URL's
+######################
+#[url "ssh://git@cd.splunkdev.com"]
+#    insteadOf = bb:
+
+[cola]
+	spellcheck = false
+#[difftool "sourcetree"]
+#	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
+#	path =
+#[mergetool "sourcetree"]
+#	cmd = /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
+#	trustExitCode = true
+#[init]
+	defaultBranch = main

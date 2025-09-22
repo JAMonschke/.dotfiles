@@ -1,0 +1,203 @@
+" ==============================================================================
+" ==============================================================================
+" vimrc
+" see: https://vimhelp.org/options.txt.html
+"
+" NOTE: After install.sh is run, this file will be linked from both
+"       .config/.vimrc AND .config/nvim/init.nvim, and will be used by either or
+"       both nvim or vim. I.e. keep this in mind when editing this file.
+" ==============================================================================
+" ==============================================================================
+
+" ===================================================
+" ======== Execution  related ==========
+" ===================================================
+"
+" remediation for various security issues:
+" (CVE-2002-1377, CVE=2007-2438, CVE-2016-1248, etc.
+set nomodeline
+
+set nocompatible  " allow VIM extensions to VI functionality
+
+" set directory=~/.vim/tmp  "set aside directory for backup files
+
+set cpoptions=aABceFsmq
+" cpoptions == (vi) "compatability-options" (single character flags)
+" see ":help cpoptions"
+" a | :read command will set the alternate filename
+" A | :write command will set the alternate filename
+" B | remove special meaning of '\' in mappings
+" c | searching continues at the end of any match at the cursor position
+" e | add <CR> to the last line when executing a "register" with ":@r"
+" F | :write command will set the filename for the current buffer
+" s | set buffer options when entering a buffer for the first time
+" m | "showmatch" will wait half a second...
+" q | when joining lines, leave the cursor position where it would be...
+
+
+
+" ===================================================
+" ======== UI rendering and behavior ==========
+" ===================================================
+" let &term = $TERM
+set background=dark " tell vi that I use a dark background
+set clipboard=unnamed " share the clipboard
+set fdm=manual    " fold method [ manual, indent, expr, marker, syntax, diff ]
+set lazyredraw    " redraw only when needed (so macros are faster)
+set linespace=0   " number of pixels between lines of text.
+set mouse=a       " enable use of the mouse for all modes
+set nostartofline " don't reset cursor to the beginning of the line.
+set report=0      " tell us when anything is changed via :... [?]
+set scrolloff=10  " keep 10 lines above and below the current line.
+set showcmd       " show the command being typed.
+set showmatch     " highlight matching [{()}]
+set sidescrolloff=10 "keep 10 columns / characters at the sides
+set visualbell    " use visual bell instead of beeping.
+set wildmenu      " visual autocomplete for command menu
+set formatoptions+=j "Delete comment character when joining commented lines
+set encoding=utf-8
+
+" set what <backspace> is allowed to delete :
+"  indent | delete auto-indents
+"  eol    | delete line brakes
+"  start  | delete past where "indent" mode was entered.
+set backspace=indent,eol,start
+
+" =============================
+" ======= UI decoratorss ======
+" =============================
+set cursorline    " highlight the current line
+set cursorcolumn  " highlight the current column
+set number        " show line numbers
+set numberwidth=5 " always use 5 characters for line numbers.
+set list          " turn on display of trailing white-space.
+set showmode      " display the current mode in the status line.
+
+" ======= add indentation guides to the statusline  ======
+" laststatus: when to show the status line: 
+"    0: never 
+"    1: when there is more than one window
+"    2: always
+set laststatus=2            " always show statusline.
+set statusline=\ \ \ \ \    " skip 5 spaces for line numbers.
+set statusline+=\|          " column 1 pseudo-indentation reference guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=\ \ \ \|    " indentation guide mark
+set statusline+=%=          " switch to right-justified
+set statusline+=FILE:\"%t\"
+set statusline+=\ \ \       " 3 space seperation
+set statusline+=COL:%c\ \ 
+set statusline+=LINE:%l/%L
+
+" TODO: investigate usage and utility of these:
+set ruler         " show "row, collumn" in status bar.
+" set rulerformat   " related to statusline but distingquised by (?)
+
+" ==============================
+" ======= Spaces and Tabs ======
+" ==============================
+" NOTE: Q:what is needed to enable a litteral tab when expandtab is enabled?
+set autoindent    " if nothing indicates otherwise maintain indentation.
+set expandtab     " tab-key in editing becomes spaces
+set nowrap        " explicitly turn off automatic line-wrapping
+set shiftround    " round-off indentation to next tabstop
+set shiftwidth=4  " how many spaces for indentation
+set softtabstop=0 " 0 == turn off soft tab-stops (act as-if tabs while editing)
+set tabstop=4     " number of visual spaces per tab
+" set smartindent   " does the right thing (mostly) in programs
+" set cindent       " stricter rules for C programs
+
+
+" ===================================================
+" ====== color and highlighting ========
+" ===================================================
+" highlight groups=
+"     [Comment, Constant, Cursor, CursorColumn, CursorLine, ErrorMsg, Folded, 
+"      FoldColumn, IncSearch, LineNr, MatchParen, Normal, NonText, Special, 
+"      TabLine, TabLineFill, TabLineSel, VertSplit]
+" highlight color target values=
+"     [cterm,gui][bg,fg]
+" highlight font attributes:
+"     [bold, underline, undercurl, reverse / inverse, italic, standout, NONE]
+" colors : 
+"     [Black, DarkBlue, DargGreen, DarkCyan, DarkRed, DarkMagenta, 
+"      Brown / DarkYellow, LightGray / LightGrey / Gray / Grey, 
+"      DarkGray / DarkGrey, Blue / LightBlue, Green / LightGreen, 
+"      Cyan/ LightCyan, Red / LightRed, Magenta / LightMagenta, 
+"      Yellow / LightYellow, White]
+"     -- see also :
+"        https://vim.fandom.com/wiki/Xterm256_color_names_for_console_Vim
+
+if has('nvim')
+    " 'vim' doesn't seem to recognize this option.
+    set termguicolors         " enable 24-bit colors (is this compatible with 8-bit?
+endif
+
+let base16colorspace=256  " allow use of 256 colors
+
+syntax on
+set colorcolumn=81    " create highlight columns at column 81
+highlight ColorColumn ctermbg=darkgray ctermfg=red guibg=darkgray guifg=red
+
+" These settings (cut-and-paste from elsewhere) are intended to enable
+" highlighting of leading / trailing spaces and characters beyond column 80
+" but it don't seem to work as is...
+" ===================
+" syntax match ErrorLeadSpace /^ \+/      " highlight any leading spaces
+" syntax match ErrorTailSpace / \+$/      " highlight any trailing spaces
+" syntax match Error80        /\%>80v.\+/ " highlight anything past 80
+" highlight Error80 ctermbg=red
+" highlight ErrorLeadSpace ctermbg=red
+" highlight ErrorTailSpace ctermbg=red
+
+set incsearch     " search as characters are entered
+set hlsearch      " highlight matches when searching
+
+nnoremap <F4> :nohlsearch<CR>   " use <F4> to turn highlighting off.
+" set hlsearch! hlsearch?<CR>  " ??
+" set hls!<bar>set hls?<CR>    " ??
+
+" ===================================================
+" ====== conditional settings Search related ========
+" ===================================================
+" alternatively use: 
+"    if exists(':tnoremap')
+"       tnoremap <Esc> <C-\><C-n>
+"    endif
+" see :help nvim-from-vim (when running nvim)
+
+" ****************
+" place settings that are NOT applicable to nvim inside this condition
+" expression.    e.g. ttymouse
+" ****************
+if !has('nvim')
+    if has('mouse_sgr')
+        set ttymouse=sgr
+    endif
+endif
+
+" ****************
+" place settings here that are SPECIFIC to nvim
+" ****************
+if has('nvim')
+    " ***********
+    " Python3 path
+    " ***********
+
+    " for macOS/Darwin when python is installed by brew."
+    "let g:python3_host_prog='/usr/local/bin/python3' "
+
+    " for Ubuntu/Linux when python is installed by brew."
+    let g:python3_host_prog='/home/linuxbrew/.linuxbrew/bin/python3' "<<== THIS"
+
+    " for Ubuntu/Linux when python is installed via ?."
+    "let g:python3_host_prog='/usr/bin/python3'"
+
+endif
+

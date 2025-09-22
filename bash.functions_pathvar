@@ -1,0 +1,317 @@
+# can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# include guard
+filename="bash.functions_pathvar"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+###########################################
+###########################################
+# functions for management of variables containing "paths"
+#   E.g. $PATH, $GOPATH, etc.
+# Convention is that functions operate on variables via their name unless the
+# function name has "val" or "value" in it.
+#
+# NOTE: Not yet tested/validated with pathnames or directory names containing
+#       spaces and is likely not yet fully functional for those cases
+# NOTE: This file is "stand alone" and does not depend on (source) any other 
+#       files.
+###########################################
+###########################################
+
+pathvar.() { bash.show_functions 'pathvar\.' ; }
+
+###############################################
+# make a weak attempt at generating an acceptable name for a file/directory
+# from a string passed in:
+# 1) remove any quote '"' characters,
+# 2) replace any other non alpha-numeric characters with '_'
+# TODO: 
+# 1) add code to ignore properly escaped values (e.g. "foo\ bar")
+# 2) add checks for constructs that we should not try to normalize.
+#    (quotes should likely fall into that category).
+###############################################
+pathvar.normalize_string_for_path()
+{ echo -n "${@}" | tr -d "\"" -c "[:alnum:]" "_" ; }
+
+###########################################
+# function to generate a string for an absolutely minimal path
+# to be used as-is or as a basis for additions.
+###########################################
+pathvar.get_min_path_value() 
+{
+    case ${UNAME} in
+        Darwin )
+            echo "/usr/bin:/bin:/usr/sbin:/sbin" 
+            return 0 ;;
+        Linux )
+            # add further discrimination between Linux environments
+            # if it is needed in the future.
+            echo "/usr/lib/distcc/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin" 
+            return 0 ;;
+        * )
+            # add further discrimination and/or error noisiness if appropriate
+            echo "/usr/bin:/bin:/usr/sbin:/sbin" 
+            return 1 ;;
+    esac
+}
+
+###########################################
+# echo the contents of the pathvar with each directory on its own line 
+# USAGE:
+#    pathvar.pretty_print "name_of_path_variable" 
+#    pathvar.value_pretty_print "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# EX: 
+#    pathvar.pretty_print "PATH"
+#    pathvar.value_pretty_print "${PATH}"
+###########################################
+# pathvar.pretty_print() { echo -e "${!1:+\n}${!1}${!1:+\n}" | tr ":" "\n" ; }
+pathvar.value_pretty_print() { echo -e "${*}" | tr ":" "\n" ; }
+pathvar.pretty_print() { echo -e "${!1}" | tr ":" "\n" ; }
+
+###########################################
+# returns true(0) if the pathvar contains an exact match for the directory or 
+# false(1) otherwise.
+# USAGE:
+#   if [[ pathvar.contains "name_of_path_variable" "directory" ]] ; then
+###########################################
+pathvar.value_contains() 
+{ 
+       [[ ${1} ==   ${2}:* ]] \
+    || [[ ${1} == *:${2}   ]] \
+    || [[ ${1} == *:${2}:* ]]
+}
+
+pathvar.contains() { pathvar.value_contains "${!1}" "${2}"; }
+
+###########################################
+# Takes a single (quoted) string path variable value parameter and removes 
+# redundant elements.  I.e. such that equivelent pathvar values should also be
+# identical.
+# 
+# 1) Replaces consecutive ":" ("::") with a single ":"
+# 2) replaces consecutive "/" ("//") with a single "/"
+# 2) Removes any trailing '/' on individual directory paths.
+#
+# USAGE:
+#      export PATH="$(pathvar.value_normalize ${PATH})"
+#
+# TODO: 
+#  1) replace any (non-escaped) spaces with escaped spaces
+#     e.g. "  foo/bin/my dir" ==> "\ \ foo/bin/my\ dir"
+#     (likely by esaping all spaces and subsequently removing any double escpaes
+#     that result.)
+#  2) remove duplicated directory entries in a pathvar.  To preserve the 
+#     directory prioritization behavior of the original path, keep the first 
+#     occurrence and remove subsequent entries.  Probably implement by 
+#     building an associative array keyed on the (normalized) directories and
+#     storing an index of the order of the first occurrence, and then 
+#     reconstructing the contents of the pathvar based on the array.
+###########################################
+pathvar.value_normalize()
+{
+    local pathvar_value="${1}"
+
+    # replace 2 or more adjacent ":" or "/" with single instances.
+    # NOTE: with search&replace substitutions, the characters in the "replace"
+    #       string are not (re)evaluated with the subsequent characters.  
+    #       I.e. such that 3 or more ":" or "/" would not be completely cleaned.
+    #       therefor we loop until the substitutions have no effect .
+    # NOTE: (no post-test loop in bash)
+    local last_pathvar_value="${pathvar_value}_42" # guarantee != on first pass.
+    while [[ "${pathvar_value}" != "${last_pathvar_value}" ]]; do
+        last_pathvar_value="${pathvar_value}"
+        pathvar_value="${pathvar_value//::/:}"
+        # use echo -e to remove double-escapes that occur on some bash 
+        # environments, but not all ( "//" is recognized as an escape, but "/\"
+        # is not).
+        pathvar_value="$(echo -e "${pathvar_value//\/\//\/}")"
+        # alternatively:
+        # pathvar_value="$(echo $pathvar_value | sed -e's/::/:/g' -e's|//|/|g')"
+    done
+
+    # to handle the (unusual) case of "/" (the root directory) being included
+    # in the path, first look for those cases explicitly and substitute '|' for
+    # the / and then reverse the substitution after removing (truly) trailing 
+    # "/" characters.
+     
+    # "/" is (not) the sole content of the path.
+    if [[ "$pathvar_value" != "/" ]]; then
+        # "/:" is the first entry in the path.
+        pathvar_value="${pathvar_value/#\/:/|:}"
+        # ":/" is the last entry in the path.
+        pathvar_value="${pathvar_value/%:\//:|}"
+        # ":/:" embeded in the middle of the path
+        pathvar_value="${pathvar_value//:\/:/:|:}"
+
+        # replace "/:" with ":" (trailing / on directories except the last)
+        pathvar_value="${pathvar_value//\/:/:}"
+        # remove a trailing '/' if present on the last entry 
+        pathvar_value="${pathvar_value/%\/}"
+
+        # restore "|" to "/"
+        pathvar_value="${pathvar_value//|/\/}"
+    fi
+
+    echo "${pathvar_value}"
+}
+
+###########################################
+# Takes the name of a pathvar and:
+# 1) Replaces multiple ":" ("::") with single ":"
+# 2) Removes any trailing '/' on individual directory paths.
+#
+# see: pathvar.value_normalize() above
+#
+# USAGE:
+#      pathvar.normalize "name_of_path_variable"
+###########################################
+pathvar.normalize() { export "${1}"="$(pathvar.value_normalize "${!1}")"; }
+
+###########################################
+# escape "/" in a directory path with "\/".
+# NOTE: primarily for use by pathvar.rmdir() so that the escaped directory path
+#       can be used in "/search/replace/" context.
+###########################################
+pathvar.value_esc_slash() 
+{
+    local value="${1}"
+    # depending on whether this is bash 5.0 (on my Mac) or bash 4.2.x on
+    # dev-cluster, this escaping may result in "double escaping"
+    # running through "echo -e" is a hack that will normalize the escaping
+    # for either case. (because echo recognizes \\ as an escape but not \/ ).
+    echo -e "${value//\//\\\/}"
+}
+
+
+###########################################
+# remove all exact matches of a directory from a pathvar
+# -- guards against partial string matches
+# -- pathvar will be created if it doesn't exist.
+# -- pathvar will always be exported, regardless of initial status.
+# -- returns true(0) if one or more matches were found or false(1) otherwise.
+# USAGE:
+#    pathvar.rmdir "name_of_path_variable" "directory"
+###########################################
+pathvar.value_rmdir()
+{
+    local pathvar_original pathvar_value pathvar_value0 directory
+    local  directory_escaped last_pathvar_value
+    pathvar_original="${1}"
+    pathvar_value="$(pathvar.value_normalize "${1}")"
+    pathvar_value0="${pathvar_value}"
+    directory="$(pathvar.value_normalize "${2}")"
+    # directory parameter with '/' escaped to '\/' so that it can be
+    # used in "search and replace" parameter expansion syntax.
+    directory_escaped="$(pathvar.value_esc_slash "${directory}")"
+
+    # distinct tests for each case below are required so that the tests can 
+    # ensure exact matches on directory (by forcing checks at beginning and end
+    # of the text and looking for ':' delimiters)
+
+    # remove all occurrences that are not at beginning or end of pathvar_value
+    # NOTE: this replaces ":${directory}:" with ":", but that ":" is not 
+    #       re-evaluated with the text that follows such that 2 consecutive 
+    #       matches would be missed.  Therefor this must be run in a loop until 
+    #       no changes result.
+    last_pathvar_value="${pathvar_value}_42"
+    # repeat until the substitution has no effect
+    while [[ "${last_pathvar_value}" != "${pathvar_value}" ]]; do
+       last_pathvar_value="${pathvar_value}"
+       pathvar_value="${pathvar_value//:${directory_escaped}:/:}"
+    done
+
+    ##############################
+    # handle edge cases that would be missed by the bulk logic above.
+    ###############################
+
+    # remove if at beginning of pathvar_value (with other entries)
+    pathvar_value="${pathvar_value/#${directory_escaped}:}"
+
+    # remove if at end of pathvar_value (with other entries)
+    pathvar_value="${pathvar_value/%:${directory_escaped}}"
+
+    # remove if directory is only entry in pathvar_value
+    if [[ "${pathvar_value}" == "${directory}" ]]; then
+         pathvar_value=""
+    fi
+
+    # decide what our return value should be.
+    if [[ "${pathvar_value0}" != "${pathvar_value}" ]] ; then
+        echo "${pathvar_value}"
+        return 0   # 1 or more directory instances was found and removed.
+    else
+        echo "${pathvar_original}"
+        return 1   # directory was NOT present
+    fi
+}
+
+pathvar.rmdir()
+{
+    # short-circuit for empty or non-existant pathvar_name since that would 
+    # would result in an empty parameter expansion for ${pathvar_value} and 
+    # would mess things up...
+    [[ -z ${!1} ]] && return 0
+    local pathvar_name pathvar_value directory new_pathvar_value
+    pathvar_name="${1}"
+    pathvar_value="${!pathvar_name}"
+    directory="${2:?}"
+    new_pathvar_value="$(pathvar.value_rmdir "${pathvar_value}" "${directory}")" \
+            && export "${pathvar_name}"="${new_pathvar_value}"
+}
+
+###########################################
+# pathvar.<prepend/append>_dir_<uncond/if_exists> ()
+#
+# remove any existing entry of the directory from the path variable and
+# [ap/pre]pend the directory to the path variable 
+# 
+# If an _if_exists() variant is used, then no action is taken if the directory
+# does not exist.
+#
+# If the _uncond() variants is used, then the actions described above are 
+# performed regardless of whether or not the directory exists.
+#
+# USAGE: 
+#    pathvar.###pend_dir_#####  "name_of_path_variable" "directory" 
+#
+# EX:
+#    pathvar.prepend_dir_uncond CDPATH "${HOME}/git"
+#
+# NOTE: The _uncond variants are present primarily to deal with cases like 
+#       ${SPLUNK_HOME}/bin where the directory may not exist at the time that 
+#       a script or .bash_profile is executed, but the directory must be picked
+#       up immediately when "contrib" is being built.
+#
+# IMPL NOTE: ${!1:+:} is used to conditionally add a ":" character only when
+#       the current pathvar is not empty.
+###########################################
+pathvar.prepend_dir_uncond() 
+{
+    local directory
+    directory="$(pathvar.value_normalize "${2}")"
+    pathvar.rmdir "${1}" "${directory}"
+    # shellcheck disable=SC2140
+    export "${1}"="${directory}${!1:+:}${!1}"
+}
+
+pathvar.append_dir_uncond()  
+{
+    local directory
+    directory="$(pathvar.value_normalize "${2}")"
+    pathvar.rmdir "${1}" "${directory}"
+    # shellcheck disable=SC2140
+    export "${1}"="${!1}${!1:+:}${directory}"
+}
+
+# these explicitly return 0 to "eat" any non-zero result code that may be set
+# when the directory doesn't exist.
+pathvar.prepend_dir_if_exists() 
+{ [[ -d "${2}" ]] && pathvar.prepend_dir_uncond "${1}" "${2}"; return 0; }
+
+pathvar.append_dir_if_exists() 
+{ [[ -d "${2}" ]] && pathvar.append_dir_uncond "${1}" "${2}"; return 0; }
+
+fi # end of include guard

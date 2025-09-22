@@ -1,0 +1,283 @@
+# SC1090: can't follow non-constant source
+# shellcheck disable=SC1090
+# SC2154: variables referenced but not assigned (from global namespace)
+# shellcheck disable=SC2154
+# SC2120: function() references arguments, but none are ever passed.
+#    warning issued erroneously because we check $# to verify that there are no
+#    arguments.
+# shellcheck disable=SC2120
+
+# include guard
+filename="bash.functions_prompt"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+################################################################################
+################################################################################
+# functions for use in setting prompt, terminal window title and
+# (on Darwin/MacOs) iTerm2 "window badge"
+#
+# depends on:
+#   ${DOTFILES_DIR}/bash.ansi
+#   ${DOTFILES_DIR}/bash.functions_util 
+#   ${DOTFILES_DIR}/bash.functions_git
+#
+# TODO: revise to make friendlier to terms that don't support unicode
+#       E.g. xterm
+# NOTE: for BASH to properly track the length of the prompt string:
+#     -- when setting environment variables directly, escape sequences must be
+#        be bracketed with "\[" and "\]".
+#     -- however when text is generated from something else to be inserted into
+#        an environment variable the escape sequences must instead be bracketed
+#        with "\x01" and "\x02".  (Use of /001 and /002 may trigger a BASH bug
+#        if they are immediately followed by more digits.)
+################################################################################
+################################################################################
+source "${DOTFILES_DIR:?}/bash.functions_util"
+source.once "${DOTFILES_DIR:?}/bash.ansi" 
+source.once "${DOTFILES_DIR:?}/bash.functions_git"
+
+### Something to play with...
+### see also liquidpromptrc
+# if [ -f /usr/local/share/liquidprompt ]; then
+#     source.once /usr/local/share/liquidprompt
+# fi
+
+prompt.() { bash.show_functions 'prompt\.' ; }
+
+###############################################
+# short function to provide an abbreviated name for the hosts that I use.
+###############################################
+prompt.short_hostname()
+{
+    # replace any cases where ${HOSTNAME} resolves to a longer or unuseful name.
+    case "${HOSTNAME}" in
+#       "C02DW2MWMD6M" ) echo "mac"
+#          ;;
+#       "mrt.sv.splunk.com" ) echo "mrt"
+#          ;;
+#       "wimpy.sv.splunk.com" ) echo "wimpy"
+#          ;;
+#       "ronnie.sv.splunk.com" ) echo "ronnie"
+#          ;;
+       * ) echo "${HOSTNAME}"
+          ;;
+    esac
+}
+
+
+###############################################
+# echos the current branchname in brackets as
+# [branch name] if working directory is in a branch.
+# or with "[No Repository]" if not in a git branch.
+# (currently only used to set window title)
+#
+# TODO: add use of unicode (e.g. codepoint: f126) with appropriate font support.
+#     
+###############################################
+prompt.decorated_git_branch()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" || return 1;
+    local branch
+    branch="$(git.get_branch)"
+    if [[ ! "${branch}" == "" ]]; then
+       # echo -n "【${branch}】"
+       echo -n "[${branch}]"
+    else
+       # echo -n "【no repository】"
+       echo -n "[no repository]"
+    fi
+}
+
+
+###############################################
+# set the window title to 
+# working directory   [Git Branch]
+###############################################
+prompt.set_window_title()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" || return 1;
+    local title
+    title="$(pwd)    $(prompt.decorated_git_branch)@$(prompt.short_hostname)"
+    echo -en "$(prompt.set_window_title_to "${title}")"
+}
+
+
+###############################################
+# set the iterm2 "badge" to any parameters...
+# (ignored if not running in Darwin environment)
+###############################################
+prompt.set_iterm2_badge()
+{
+  if [[ "${UNAME}" == "Darwin" ]]; then
+      # any number of arguments is valid (no arguments should reset the badge)
+      printf "\e]1337;SetBadgeFormat=%s\a"  "$(echo -n "$*" | base64)"
+  fi
+}
+
+
+###############################################
+# set the window title to whatever parameters follow.
+###############################################
+prompt.set_window_title_to()
+{
+    util.assert_argc_ge 1 $# "${FUNCNAME[0]}" || return 1;
+    local title="${*}"
+    echo -en "\033]0;${title}\007";
+}
+
+
+###############################################
+# use to wrap parameters with the escape sequence that will mark them
+# as not contributing to the prompt length calculations.
+###############################################
+_prompt.wrap_esc()
+{
+   # NOTE: The bash-specific \[ and \] are in fact translated to 
+   #       \001 and \002 
+   # Note: If you use bash's printf or echo -e, and if your text has \001 or 
+   #       \002 immediately before a number, you'll hit a bash bug that causes 
+   #       it to eat one digit too many when processing octal escapes – that 
+   #       is, \00142 will be interpreted as octal 014 (followed by ASCII "2"),
+   #       instead of the correct octal 01 (followed by ASCII "42"). For this 
+   #       reason, use hexadecimal versions \x01 and \x02 instead.
+   local text="${*}"
+   echo -en "\x01${text}\x02"
+}
+
+
+###############################################
+# if $? is not 0, then echos "[$?]" in red, 
+# otherwise echos "[0]" in green.
+# (used for my prompt)
+###############################################
+prompt.status() 
+{
+    local restoreval=${?}  # save current value to be restored on exit.
+    local retval=${1:-$?}
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" || return 1;
+    if [[ $retval -ne 0 ]]; then
+        echo -en "\x01${_fg[red]}${_attr[bold]}\x02"
+        # echo -en "【⛔️ (${retval}) 】"
+        echo -en "[${_utf8[fancyX]} (${retval})]"
+        echo -en "\x01${_attr[bold_off]}${_fg[dflt]}\x02" 
+    else
+        echo -en "\x01${_fg[green]}\x02"
+        # echo -en "【✅ (0)】"
+        echo -en "[${_utf8[checkmark]}(0)]"
+        echo -en "\x01${_fg[dflt]}\x02"
+    fi
+    return $restoreval
+}
+
+
+###############################################
+# echos the current branch name in brackets as with
+# prompt.decorated_git_branch() above but adds color along with the escape 
+# codes required when setting the prompt so that it knows that the ANSI escape
+# sequences will not contribute to the length of the prompt.
+############################################## 
+# prompt.git_branch() 
+# {
+#     local fg
+#     [[ -n ${SPLUNK_BUILD_ENV} ]] && fg="${_fg[blue]}" || fg="${_fg[green]}"
+# 
+#     local branch="$(git.get_branch)"
+#     local result=""
+#     result="${result}$(_prompt.wrap_esc ${fg}${_attr[italic]})"
+#     # result="${result}【${branch:=𝙣𝙤 𝙧𝙚𝙥𝙤𝙨𝙞𝙩𝙤𝙧𝙮}】"
+#     result="${result}[${branch:=𝙣𝙤 𝙧𝙚𝙥𝙤𝙨𝙞𝙩𝙤𝙧𝙮}]"
+#     result="${result}$(_prompt.wrap_esc ${_attr[italic_off]}${fg[dflt]})"
+#     echo -en "${result}"
+# }
+
+prompt.git_branch_info()
+{
+    # TODO: add functionality to also show commits ahead/behind for branch
+    #       relative to parent branch in addition to local vs remote repository.
+
+    # short-circuit if not in repository
+    git.test_in_repository || return 0
+    local fg
+    local result=""
+
+    # determine escaped ansi color sequences for branch and status color.
+    [[ -n ${SPLUNK_BUILD_ENV} ]] && fg="${_fg[blue]}" || fg="${_fg[green]}"
+    local b1="\x01${fg}${_attr[italic]}\x02"
+    local b0="\x01${_attr[italic_off]}${_fg[dflt]}\x02"
+    local s1="\x01${_fg[yellow]}\x02"
+    local s0="\x01${_fg[dflt]}\x02"
+
+    result="   ${result}${b1}【$(git.get_branch)】${b0}"
+    result="${result}${s1}$(git.get_branch_status_short)${s0}\n"
+    result="${result}${b1}==>【$(git.get_branch_parent)】${b0}\n"
+    echo -en "${result}"
+}
+
+
+###############################################
+# this function is called by the shell each time a new command line prompt
+# is displayed via:
+#      export PROMPT_COMMAND="set_prompt"
+#
+# because my prompt commands are setting colors from inside functions, the 
+# prompt needs to be generated by this function to avoid problems with BASH not 
+# properly interpreting the number of characters in the prompt.
+#
+# TODO: revise to execute the commands here, store the values and build the
+#       strings rather than creating the prompt to call the function at display
+#       time.
+# TODO: revise to use unicode specified with \0### octal constants to see if
+#       that fixes the problem around computing line widths when the command
+#       wraps to a second line...
+###############################################
+prompt.set_prompt()
+{
+    local retval=$?  # save before something changes it...
+
+    # update window title.
+    prompt.set_window_title
+
+    if [[ "${UNAME}" == "Darwin" ]]; then
+        # update iterm2 badge
+        prompt.set_iterm2_badge "$(prompt.decorated_git_branch)@$(prompt.short_hostname)"
+    fi
+
+    ###########################################
+    # prompt 
+    # uses: ${DOTFILES_DIR}/bash.ansi 
+    #       and ${DOTFILES_DIR}/bash.functions_git
+    # NOTE: escape sequences must be enclosed in "\[" and "\]" so that bash
+    #       can keep straight the number of characters in the prompt.
+    # "\W" : current directory
+    # "\w" : current directory with path
+    # "\u" : username
+    # "\h" : hostname
+    # "\H" : fqdn
+    # "\\$" : "$" if a user or '#' if root.
+    ###########################################
+
+    # Init: reset all attributes and colors to the current defaults
+    local PS="\[${_attr[none]}\]"
+
+    # ONLY if inside a git repository, add repository information on its own
+    # line.
+    # PS="${PS}$(prompt.git_branch_info; prompt.status ${retval}; prompt.short_hostname)"
+    PS="${PS}$(prompt.status ${retval}; prompt.short_hostname)"
+
+    # PS="${PS}$(prompt.git_branch_info;" \
+    #           "prompt.status ${retval};" \
+    #           "prompt.short_hostname)"
+
+    # add current working directory
+    PS="${PS}\[${_fg[bright_white]}\]:\w/\[${_fg[dflt]}\] "
+
+    # add '$' and then reset any "ansi" attributes
+    PS="${PS}\[${_fg[bright_white]}\]\\$\[${_fg[dflt]}\] "
+
+    PS1="${PS}"
+    return $retval
+}
+
+fi # end of include guard

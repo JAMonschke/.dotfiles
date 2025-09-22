@@ -1,0 +1,425 @@
+# can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# include guard
+filename="bash.ansi"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+################################################################################
+################################################################################
+# a set of variables and functions for manipulating 
+# ASCII characters and ANSI escape sequences:
+#
+# see: http://ascii-table.com/ansi-escape-sequences.php
+# see: https://en.wikipedia.org/wiki/ANSI_escape_code
+# see: https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
+#
+# TODO: add functionality for generating prompt escaped versions of these:
+#       i.e. "\[<code>\]"
+#
+# TODO: make appropriate use of "tput" to set these constants based on the 
+#       current terminal settings. 
+#
+### from : https://github.com/jimeh/git-aware-prompt/blob/master/colors.sh
+#
+### Bold
+# bldblk="$(tput setaf 0 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;30m')"  # Black
+# bldred="$(tput setaf 1 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;31m')"  # Red
+# bldgrn="$(tput setaf 2 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;32m')"  # Green
+# bldylw="$(tput setaf 3 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;33m')"  # Yellow
+# bldblu="$(tput setaf 4 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;34m')"  # Blue
+# bldpur="$(tput setaf 5 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;35m')"  # Purple
+# bldcyn="$(tput setaf 6 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;36m')"  # Cyan
+# bldwht="$(tput setaf 7 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;37m')" # White
+#
+#       RESET="$(     $TPUT sgr0)"    # Reset all attributes
+#       BRIGHT="$(    $TPUT bold)"    # Set “bright” attribute
+#       FGDEFAULT="$( $TPUT setaf 9)" # default foreground color
+################################################################################
+################################################################################
+
+
+################################################################################
+################################################################################
+# ansi related constant stored in associative arrays
+#
+# NOTE: After these variables are initialized with data below, they are then
+#       marked as "read only" (consistent with their nature as constants).
+#
+#       This will mean that if any modifications, additions, or removal of any
+#       of these values in this file are made, then attempting to use
+#       bash.init() or any other means to cause this file to be sourced will not
+#       be able to pick up those changes. The changes will not be reflected
+#       until the root shell is exited by logging out and back in again.
+################################################################################
+################################################################################
+
+# if unset fails (because the variables was been set to readonly) then
+# the code in this if/then block has already been executed.
+if unset _char _cmnd _crsr _attr _fg _bg _utf8 2>/dev/null; then
+
+    declare -gA _char  # array of special characters
+    declare -gA _cmnd  # array of terminal control commands
+    declare -gA _crsr  # array of cursor control commands
+    declare -gA _attr  # array of character attributes (bold, etc.)
+    declare -gA _fg    # array of foreground colors
+    declare -gA _bg    # array of background colors
+    declare -gA _utf8  # array of select UTF-8 characters.
+
+    #######################################
+    # UTF8 character codes
+    # TODO: investigate advantages and disadvantages of using escapes vs. literal
+    #       strings with embedded UTF8 characters.
+    #       -- The escapes (commented below) don't seem to work as is...
+    #       -- escaped encoding is more resilient regarding file encoding...
+    #       -- using escaped sequences may make the prompt handle them correctly...
+    #
+    # NOTES:
+    #       -- to get hexadecimal bytes use:
+    #             "echo <symbol> | hexdump -C"
+    #          (or use "hexdump -b" to get octal codes)
+    #       -- since bash 4.2 \uHHHH can be used in $'...' strings.
+    #          E.g. PS1=$'some text \u253f more text'
+    #######################################
+
+    if [[ ${LANG} == *UTF-8 ]]; then  # substring matching on UTF-8
+             _utf8[fancyX]="✗"  # $'\0342\0234\0227'
+          _utf8[checkmark]="✓"  # $'\0342\0234\0223'
+     _utf8[triangle_right]="‣"  # $'\0342\0200\0243'
+             _utf8[circle]="•"  # $'\0342\0200\0242'
+             #NOTE: glyphs below occupy two character positions
+    _utf8[green-checkmark]="✅" # $'\0342\0234\0205'
+           _utf8[no_entry]="⛔️" # $'\0342\0233\0224\0357\0270\0217'
+     _utf8[no_pedestrians]="🚷" # $'\0360\0237\0232\0267'
+         _utf8[prohibited]="🚫" # $'\0360\0237\0232\0253'
+       _utf8[left_bracket]="【" # $'\0343\0200\0220'
+      _utf8[right_bracket]="】" # $'\0343\0200\0221'
+               _utf8[pray]="🙏" # $'\0360\0237\0231\0217'
+            _utf8[namaste]="${_utf8[pray]}"
+    else  # provide text alternates when UTF-8 is unavailable
+             _utf8[fancyX]="<X>"
+          _utf8[checkmark]="<checkmark>"
+     _utf8[triangle_right]="<triangle_right>"
+             _utf8[circle]="<circle>"
+    _utf8[green-checkmark]="<green-checkmark>"
+           _utf8[no_entry]="<no_entry>"
+     _utf8[no_pedestrians]="<no_pedestrians>"
+         _utf8[prohibited]="<prohibited>"
+       _utf8[left_bracket]="["
+      _utf8[right_bracket]="]"
+               _utf8[pray]="<pray>"
+            _utf8[namaste]="<namaste>"
+    fi
+
+    #######################################
+    # ASCI control characters
+    # NOTE: $'text' : the characters in text have C style string escapes applied.
+    #######################################
+         _char[null]=$'\000' # ^@ <Null>             /0
+         _char[bell]=$'\007' # ^G <Bell>
+           _char[bs]=$'\010' # ^H <Backspace>        /b
+          _char[tab]=$'\011' # ^I <Tab (Horizontal)> /t
+           _char[lf]=$'\012' # ^J <Linefeed/Newline> (/n depending on OS)
+          _char[vlf]=$'\013' # ^K <Tab (Vertical)>   /v
+           _char[ff]=$'\014' # ^L <Form Feed>        /f
+           _char[cr]=$'\015' # ^M <Carriage Return>  /c
+          _char[esc]=$'\033' # ^[ <Esc>              /e
+         _char[crlf]="${_char[cr]}${_char[lf]}" #    (/n depending on OS)
+          _char[del]=$'\177' #    <Del>
+        _char[quote]='"'      # double quote.
+      _char[s_quote]="'"      # single quote.
+     # Used to bracket non-printable characters in some contexts
+     # E.g. shell prompts
+     _char[np_start]=$'\x01'  #non-printable start
+       _char[np_end]=$'\x02'  #non-printable end
+
+    #######################################
+    # ANSI control sequences
+    # refer to: https://en.wikipedia.org/wiki/ANSI_escape_code
+    #######################################
+    #
+    # TODO: add function(s) to make use and composition easier.  E.g.:
+    #       - cursor movement that takes integer parameters
+    #       - functions to apply attributes to text
+    #         NOTE: within strings, functions called with $(function)
+    #
+    # var="$(tput setaf 7 2>/dev/null)$(tput bold 2>/dev/null || echo '\e[1;37m')" # White
+
+                _cmnd[ansi]="${_char[esc]}["
+                 _cmnd[csi]="${_cmnd[ansi]}"  #csi = "control sequence initiator"
+         _cmnd[resetScrean]="$(tput reset)"   #"${_char[esc]}cJ"
+         _cmnd[clearScrean]="$(tput reset)"   #"${_cmnd[ansi]}2J"
+           _cmnd[clearLine]="${_cmnd[ansi]}2K"
+      _cmnd[clearLineRight]="${_cmnd[ansi]}0K"
+       _cmnd[clearLineLeft]="${_cmnd[ansi]}1K"
+          _cmnd[saveScreen]="${_cmnd[ansi]}?47h"  # clears the screen as well as saves it.
+       _cmnd[restoreScreen]="${_cmnd[ansi]}?47l"
+        _cmnd[reverseVideo]="${_cmnd[ansi]}?5h"   # set reverse video mode
+         _cmnd[normalVideo]="${_cmnd[ansi]}?5l"   # reset to normal video mode
+     _cmnd[reverseVideoOff]="${_cmnd[normalVideo]}"
+
+    #######################################
+    # ANSI Cursor control
+    # to move cursor to <line>,<column> = ${_cmnd[ansi]}<line>;<column>H
+    # ??? to report cursor line,column  ="${_cmnd[ansi]}#;#R"
+    #######################################
+           _crsr[up]="${_cmnd[ansi]}A"
+         _crsr[down]="${_cmnd[ansi]}B"
+        _crsr[right]="${_cmnd[ansi]}C"
+         _crsr[left]="${_cmnd[ansi]}D"
+     _crsr[nextLine]="${_cmnd[ansi]}E"   # not ANSI.SYS
+     _crsr[prevLine]="${_cmnd[ansi]}F"   # not ANSI.SYS
+         _crsr[save]="${_cmnd[ansi]}s"   # <esc>[{s}  ?
+      # shellcheck disable=SC2034
+      _crsr[restore]="${_cmnd[ansi]}u"   # <esc>[{u}  ?
+
+    #######################################
+    # ANSI text attributes
+    # (note multiple attributes and color codes
+    # may be consolidated with:
+    # "${_cmnd[ansi]}##;##;##m"
+    # NOTE: "<esc>[21m" does NOT turn bold off.
+    #      the model is that "bold" == "bright" which is grouped with "faint/dim"
+    #      and "<esc>[22m" will turn off either (and if both are set, the last one
+    #      set will replace the first)..
+    #
+    #######################################
+
+    # NOTE: turns off both attributes AND fg and bg colors.
+              _attr[none]="$(tput sgr0)"    # "${_cmnd[ansi]}0m"
+
+            _attr[bright]="$(tput bold)"    # "${_cmnd[ansi]}1m"
+              _attr[bold]="${_attr[bright]}"
+             _attr[faint]="${_cmnd[ansi]}2m"
+               _attr[dim]="${_attr[faint]}"
+            _attr[italic]="${_cmnd[ansi]}3m"  # not widely supported, sometimes inverse
+         _attr[underline]="${_cmnd[ansi]}4m"  # may not be available some places...
+             _attr[blink]="${_cmnd[ansi]}5m"  # may not be available some places...
+           _attr[reverse]="${_cmnd[ansi]}7m"
+
+         _attr[faint_off]="${_cmnd[ansi]}22m"
+        _attr[bright_off]="${_attr[faint_off]}"
+          _attr[bold_off]="${_attr[faint_off]}"
+           _attr[dim_off]="${_attr[faint_off]}"
+        _attr[italic_off]="${_cmnd[ansi]}23m"  # not widely supported, sometimes inverse
+     _attr[underline_off]="${_cmnd[ansi]}24m"
+         _attr[blink_off]="${_cmnd[ansi]}25m"
+       _attr[reverse_off]="${_cmnd[ansi]}27m"
+
+    #######################################
+    # Not supported on mac/iterm2. Uncomment only if these files are not being used
+    # in a mac environment.
+    #######################################
+    if [[ "${UNAME}" != "Darwin" ]]; then
+         _attr[rapidBlink]="${_cmnd[ansi]}6m"
+            _attr[invible]="${_cmnd[ansi]}8m" # not widely supported
+      _attr[strikeThrough]="${_cmnd[ansi]}9m"
+              _attr[font0]="${_cmnd[ansi]}10m"
+              _attr[font1]="${_cmnd[ansi]}11m"
+              _attr[font2]="${_cmnd[ansi]}12m"
+              _attr[font3]="${_cmnd[ansi]}13m"
+            _attr[fraktur]="${_cmnd[ansi]}20m"
+             _attr[framed]="${_cmnd[ansi]}51m"
+          _attr[encircled]="${_cmnd[ansi]}52m"
+          _attr[overlined]="${_cmnd[ansi]}53m"
+    fi
+
+    #######################################
+    # ANSI text foreground colors
+    #######################################
+               _fg[dflt]="${_cmnd[ansi]}39m"   # restore default foreground color
+              _fg[reset]="${_fg[dflt]}"        # alias of dflt.
+              _fg[black]="${_cmnd[ansi]}30m"
+                _fg[red]="${_cmnd[ansi]}31m"
+              _fg[green]="${_cmnd[ansi]}32m"
+             _fg[yellow]="${_cmnd[ansi]}33m"
+               _fg[blue]="${_cmnd[ansi]}34m"
+            _fg[magenta]="${_cmnd[ansi]}35m"
+               _fg[cyan]="${_cmnd[ansi]}36m"
+              _fg[white]="${_cmnd[ansi]}37m"
+    # the codes below should be equivalent to codes above with ;1
+    # appended i.e. color_code + bold
+    # e.g. "<esc>[91m" == "<esc>[31;1m"
+       _fg[bright_black]="${_cmnd[ansi]}90m"
+               _fg[gray]=${_fg[bright_black]}  # alias of bright_black
+               _fg[grey]=${_fg[bright_black]}  # alias of bright_black
+         _fg[bright_red]="${_cmnd[ansi]}91m"
+       _fg[bright_green]="${_cmnd[ansi]}92m"
+      _fg[bright_yellow]="${_cmnd[ansi]}93m"
+        _fg[bright_blue]="${_cmnd[ansi]}94m"
+     _fg[bright_magenta]="${_cmnd[ansi]}95m"
+        _fg[bright_cyan]="${_cmnd[ansi]}96m"
+       _fg[bright_white]="${_cmnd[ansi]}97m"
+
+    #######################################
+    # ANSI text background colors
+    #######################################
+               _bg[dflt]="${_cmnd[ansi]}49m"  # restore default background color
+              _bg[black]="${_cmnd[ansi]}40m"
+                _bg[red]="${_cmnd[ansi]}41m"
+              _bg[green]="${_cmnd[ansi]}42m"
+             _bg[yellow]="${_cmnd[ansi]}43m"
+               _bg[blue]="${_cmnd[ansi]}44m"
+            _bg[magenta]="${_cmnd[ansi]}45m"
+               _bg[cyan]="${_cmnd[ansi]}46m"
+              _bg[white]="${_cmnd[ansi]}47m"
+    # the codes below should be equivalent to codes above with ;1
+    # appended i.e. color_code + bold
+    # e.g. "<esc>[101m" == "<esc>[41;1m"
+       _bg[bright_black]="${_cmnd[ansi]}100m"
+               _bg[grey]="${_bg[bright_black]}"
+               _bg[gray]="${_bg[bright_black]}"
+         _bg[bright_red]="${_cmnd[ansi]}101m"
+       _bg[bright_green]="${_cmnd[ansi]}102m"
+      _bg[bright_yellow]="${_cmnd[ansi]}103m"
+        _bg[bright_blue]="${_cmnd[ansi]}104m"
+     _bg[bright_magenta]="${_cmnd[ansi]}105m"
+        _bg[bright_cyan]="${_cmnd[ansi]}106m"
+       _bg[bright_white]="${_cmnd[ansi]}107m"
+
+     _attr[colors_dflt]="${_fg[dflt]}${_bg[dflt]}"
+     _attr[colors_reset]="${_attr[colors_dflt]}"   # alias for colors_dflt.
+
+    # mark all of the array constants defined above as "read only" variables and
+    # export them.
+    declare -rx _char  # array of special characters
+    declare -rx _cmnd  # array of other terminal control /ansi commands
+    declare -rx _attr  # array of ansi character attributes (bold, etc.)
+    declare -rx _fg    # array of foreground color specifications
+    declare -rx _bg    # array of foreground color specifications
+    declare -rx _crsr  # array of cursor control commands
+    declare -rx _utf8  # UTF-8 characters.
+fi  # end of initialization of Ansi escape and character constants.
+################################################################################
+################################################################################
+# ansi related functions
+#
+# TODO: 
+# 1) consider rewriting these codes to be accessed through one or more functions.
+# 2) consider automating initial creation of the values via the parametrized
+#    function creation method I documented on my bash page. (i.e. making the 
+#    generation of the functions table/loop driven.
+# 2a) make those functions maintain a "stack" of states in a global variable so 
+#     that we can more robustly restore a prior state and enable functions that
+#     set and restore aspects for display of a text parameter of the call.
+# 3) extend functionality and incorporate advice from:
+#    http://mywiki.wooledge.org/BashFAQ/037
+#    see also: colors256() at the bottom of this file...
+# 4) add functions (based on bash printf format) to aid in formatting attributes
+#    to text.
+################################################################################
+################################################################################
+
+ansi.() { bash.show_functions 'ansi\.' ; }
+
+#######################################
+# function to display all available colors on 256 color ANSI terminals.
+# stolen from:
+# http://mywiki.wooledge.org/BashFAQ/037
+#######################################
+ansi.colors256()
+{
+        local c i j
+
+        printf "Colors 0 to 15 for the standard 16 colors\n"
+        for ((c = 0; c < 16; c++)); do
+                printf "|%s%3d%s" "$(tput setaf "$c")" "$c" "$(tput sgr0)"
+        done
+        printf "|\n\n"
+
+        printf "Colors 16 to 231 for 256 colors\n"
+        for ((i = j = 0; c < 232; c++, i++)); do
+                printf "|"
+                ((i > 5 && (i = 0, ++j))) && printf " |"
+                ((j > 5 && (j = 0, 1)))   && printf "\b \n|"
+                printf "%s%3d%s" "$(tput setaf "$c")" "$c" "$(tput sgr0)"
+        done
+        printf "|\n\n"
+
+        printf "Greyscale 232 to 255 for 256 colors\n"
+        for ((; c < 256; c++)); do
+                printf "|%s%3d%s" "$(tput setaf "$c")" "$c" "$(tput sgr0)"
+        done
+        printf "|\n"
+}
+
+#######################################
+# Blatantly Stolen from:
+# https://misc.flogisoft.com/bash/tip_colors_and_formatting
+#######################################
+ansi.colors256_v2()
+{
+    local fgbg color
+    for fgbg in 38 48 ; do # Foreground / Background
+        for color in {0..255} ; do # Colors
+            # Display the color
+            printf "\e[${fgbg};5;%sm  %3s  \e[0m" $color $color
+            # Display 6 colors per lines
+            if [ $(((color + 1) % 6)) == 4 ] ; then
+                echo # New line
+            fi
+        done
+        echo # New line
+    done
+}
+
+#######################################
+# Blatantly Stolen from:
+# https://misc.flogisoft.com/bash/tip_colors_and_formatting
+#######################################
+ansi.colors_and_formatting()
+{
+    local clbg clfg
+    for clbg in {40..47} {100..107} 49 ; do
+        #Foreground
+        for clfg in {30..37} {90..97} 39 ; do
+            #Formatting
+            for attr in 0 1 2 4 5 7 ; do
+                #Print the result
+                echo -en "\e[${attr};${clbg};${clfg}m ^[${attr};${clbg};${clfg}m \e[0m"
+            done
+            echo #Newline
+        done
+    done
+}
+
+#######################################
+# Blatantly Stolen from: (a comment on this page)
+# https://misc.flogisoft.com/bash/tip_colors_and_formatting
+#######################################
+ansi.rainbow()
+{
+    local i
+    for i in 21 27 33 39 45 51 50 49 48 47 46 82 118 154 190 226 220 214 208 \
+             202 196 197 198 199 200 201 165 129 93 57 21; do
+        echo -en "\e[48;5;${i}m \e[0m"
+    done
+}
+
+#######################################
+# return cursor position as "{<row>;<column>}"
+#######################################
+ansi.getCursorPos()
+{
+   local position
+   local garbage
+   echo -ne "\033[6n"            # ask the terminal for the position
+   # SC2162: read without -r mangles '\'
+   # SC2034: 'garbage' is unused.
+   # shellcheck disable=SC2162
+   # shellcheck disable=SC2034
+   read -s -d\[ garbage          # discard the first part of the response
+   # shellcheck disable=SC2162
+   read -s -dR position         # store the position in bash variable
+   echo "{$position}"            # print the position
+}
+
+
+#######################################
+# TODO: Ansi keyboard shortcut sequences
+# Esc[Code;String;...p 
+#######################################
+
+fi # end of include guard
