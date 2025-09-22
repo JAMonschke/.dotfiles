@@ -22,7 +22,8 @@ if [[ -d ${HOME}/.dotfiles ]] ; then
 else
     # we cannot use colors here because we are missing the bash.ansi file.
     printf "\n\n[ERROR]: %s\n\n" "No Directory ${HOME}/.dotfiles"
-    exit 2;
+    # return 2; we have no way to abort our initialization here without also
+    # causing the login-shell to abort (VERY BAD).
 fi
 
 
@@ -105,9 +106,9 @@ source.dir      "/etc/bash_completion.d"
 source.dir      "/home/linuxbrew/.linuxbrew/etc/profile.d"
 
 
-###########################################
+################################################################################
 # set prompts / prompt_command
-###########################################
+################################################################################
 source.required "${DOTFILES_DIR:?}"/bash.functions_prompt
 
 # NOTE: If PS0 is set, PS0 will be displayed before each command line is
@@ -117,11 +118,11 @@ PS2="▶️ "            # secondary prompt (tell me more)
 PS3="❓"              # select prompt (selecting from a list of options)
 PS4="▶︎ debugging> "  # only used for xtrace debugging.
 
-################################################################################
+###########################################
 # ${PS1} will be set via ${PROMPT_COMMAND} to execute functions to be run after
 # every command line execution which will include running prompt.set_prompt()
 # which will set ${PS1}.
-################################################################################
+###########################################
 
 # 'direnv' utility hooks ${PROMPT_COMMAND} and allows customization of the
 # environment based on the current working directory when a ".direnv" file is

@@ -124,7 +124,7 @@ bash.clear_hash()        { hash -r; }
 
 #########################
 # output values of bash internal variables
-# (see ls_* aliases in .bash_aliases)
+# (see ls_* aliases in bash_aliases)
 # TODO: on output, discriminate between empty and unset variables.
 #########################
 bash.bash_vars()

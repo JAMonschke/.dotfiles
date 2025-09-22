@@ -17,7 +17,7 @@ if [[ -z ${_sourced[${filename}]} ]]; then
 #       are intended to be run strictly from the command line easier via 
 #       aliases.
 
-alias where="command which"
+# alias where="command which"
 
 # directory shortcuts 
 alias cd.back='cd ${OLDPWD}'

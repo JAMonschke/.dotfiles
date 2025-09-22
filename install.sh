@@ -311,6 +311,15 @@ install_link()
       abort
     fi
 
+    target_dir="$(dirname ${target_path})"
+    if [[ ! -d "${target_path}" ]]; then
+      # shellcheck disable=SC2086   #convert to quoted string.
+      mkdir --parents "${target_dir}"
+      # we intentionally are not removing directories created during the install
+      # in case the user has added additional files within the directory or
+      # directory path that we are creating here.
+    fi
+
     if $(ln -s "${source_file_path}" "${target_path}"); then
         echo "link made: \"${target_path}\" ==> \"${source_file_path}\""
         add_undo_command "\$(rm \"${target_path}\")"
@@ -357,7 +366,7 @@ installation_precheck()
 ###############################################################################
 dotfiles_dir="${DOTFILES_DIR:-${HOME}/.dotfiles}"
 config_source="${dotfiles_dir}/config"
-backup_dir="${HOME}/.dotfile-backup"
+backup_dir="${HOME}/.dotfiles-backup"
 uninstall_script="${backup_dir}/uninstall.sh"
 pending_uninstall_script="${backup_dir}/reversed_uninstall.sh"
 

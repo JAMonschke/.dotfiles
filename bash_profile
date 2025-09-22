@@ -153,7 +153,9 @@ _RunIfDarwin()
     # complete -C : command is executed in a subshell environment, and its
     # output is used as the possible completions.
     # 'mc' is GNU "Midnight Commander" terminal based file manager.
-    complete -C /usr/local/bin/mc mc
+    if [[ -x /usr/local/bin/mc ]]; then
+        complete -C /usr/local/bin/mc mc
+    fi
 
     pathvar.append_dir_if_exists  PATH \
           "/Library/Frameworks/Python.framework/VersionsCurrent/bin"
@@ -190,6 +192,9 @@ _RunIfLinux()
             eval "$(dircolors -b "${HOME}/.dircolors")"
         fi
     fi
+
+    # colored GCC warnings and errors
+    export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
 }
 
 
