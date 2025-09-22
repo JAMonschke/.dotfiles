@@ -1,0 +1,69 @@
+.TH bashish 1  "February 30, 2010" "version @PACKAGE_VERSION@" "USER COMMANDS"
+
+
+.SH NAME
+bashish \- theme changer for Bashish
+
+.SH SYNOPSIS 
+.B  bashish \fB[\fIOPTION\fB]\fR
+
+.SH DESCRIPTION 
+.PP
+Bashish is a theme enviroment for text terminals. It can change colors, font,
+transparency and background image on a per-application basis. Additionally
+Bashish supports prompt changing on common shells such as bash, zsh and tcsh.
+.TP
+There is no need to restart the shell after \fIbashish\fP has been issued.
+.SH OPTIONS 
+.PP
+If invoked without options, \fIbashish\fP will start the dialog based theme changer frontend.
+.TP
+
+\fB-h, --help
+short help
+.TP
+\fB-a, --about
+display theme information
+.TP
+\fB-l, --list
+list avaliable themes in the global theme directories of bashish
+.TP
+\fBsave
+This option will save the theme to its theme directory, and reload it if no
+parsing errors can be found.
+When saving a theme, the current working directory must contain the theme to be saved.
+
+.SH "SEE ALSO"
+.PD 0
+.TP
+\fIThe Bashish Documentation\fP, Thomas Eriksson
+.TP
+\fIbashish\fP(1)
+.TP
+
+.SH COPYRIGHT 
+bashish is Copyright (c) 1999-2010 Thomas Eriksson.
+
+This program is free software; you can redistribute it and/or modify 
+it under the terms of the GNU General Public License as published 
+by the Free Software Foundation; either version 2 of the License, 
+or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, 
+but WITHOUT ANY WARRANTY; without even the implied warranty of 
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the 
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License 
+along with this program; if not, write to the Free Software 
+Foundation, Inc., 59 Temple Place, Suite 330, Boston, 
+MA 02111-1307 USA.
+
+.SH BUGS
+.TP
+One or two bugs may exist in bashish.
+
+.SH AUTHORS 
+Thomas \'arne\' Eriksson <arne@users.sourceforge.net> is the author of Bashish and this manual page.
+Patches and fixes from people listed in CREDITS.
+

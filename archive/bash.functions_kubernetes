@@ -1,0 +1,1897 @@
+# can't follow non-constant source error
+# shellcheck disable=SC1090
+
+# include guard
+filename="bash.functions_kubernetes"
+declare -gA _sourced
+if [[ -z ${_sourced[${filename}]} ]]; then
+    _sourced[${filename}]="true"
+
+################################################################################
+# Usage: 
+#    -- (based on image = nginx ) 
+#    -- In all contexts where a "pod-name" is required and an "ImageName" is 
+#       specified, the pod-name will be constructed as "ImageName-${USER}"
+#
+# DEPENDENCIES :
+#  -- kubectl         (via brew) CLI for control of kubernetes
+#  -- scloud          (via brew with splunk tap) 
+#                     CLI for APIs exposed by SCP services
+#  -- sadmin          (via brew with splunk tap)
+#                     CLI for SCP APIs related to provisioning of customers.
+#  -- kubectl-maestro (via brew with splunk tap)
+#  -- okta-kube-token (via brew with splunk tap) 
+#                     CLI for management of Okta (but not IAC) tokens.
+#  -- httpie          (via brew) (for kube.ingestFile)
+#                     lighter weight than curl for HTTP / Rest APIs
+#  -- curl 
+#  -- jq              (via brew) (for kube.login / kube.getIacToken)
+#                     CLI for Json formatting, parsing, and manipulation
+#
+# Potential Future Dependencies:
+# -- awscli
+# -- saml2aws         (CLI to aid in managing tokens between SAML and AWS)
+# -- istioctl         (CLI for Istio configuration)
+#
+# Software / Services :
+#   -- Docker : provides the low-level virtualization of a container
+#   -- Kubernetes : provides orchestration and management on top of docker.
+#   -- Maestro : Container orchestration and management on top of kubernetes.
+#   -- Istio : Provides a container communications mesh layer.
+#
+# Terms:
+#   -- Container : <Docker concept> The sole "deployable unit" in the docker
+#                  model.
+#   -- Pod : <Kubernetes Concept> 
+#            the smallest deployable unit of computing in Kubernetes.
+#            a set of one or more application containers that act as single 
+#            entity that is exposed as a single logical host. Its containers 
+#            share storage, network resources and docker/kubernetes namespace.
+#   -- Deployment : describes a scalable group of identical pods
+#   -- Service : defines access to pods
+#   -- Image : a complete image to be installed in a container.
+#   -- Machine :
+#   -- Cluster : 
+#   -- Namespace : named scope for other identifiers.
+#      -- Currently using maestro-developers,
+#      -- what other namespaces are pertinent for our usage?
+#
+#############################################################################
+#
+# GENERAL :
+# ===================
+#
+# TODO: incremental migration of this functionality into python scripts.
+#
+#       NOTE: consider any additional functionality that may be accessed and
+#       utilized by using the Python SDKs of the service APIs to more directly
+#       access the functionality we are currently accessing through 
+#       scloud / sadmin / (others?).
+#
+#       NOTE: This would introduce dependencies that would require recompilation 
+#       or embedding git functionality in the .dotfiles to keep the sdk 
+#       up-to-date and makefiles to allow rebuilding that python script when 
+#       needed.
+#
+# CLEANUP :
+# ===================
+#
+# TODO: update comments in this file to make sure that terms like "pod", 
+#       "image", etc. are used appropriately, correctly, and consistently 
+#       throughout this file.
+#
+# TODO: revise function names to reserve and consistently use kube.set* and 
+#       kube.get* for setting and retrieving values.  rename conflicting 
+#       function names appropriately.
+#
+# TODO: Cleanup the names that are used to properly discriminate names and 
+#       values that may have more than one context. 
+#
+#       E.g. SHA ==> docker_sha, searchPeer_sha, searchHead_sha, 
+#       splunkdBuildImage_sha.
+#
+# TODO: Revise kube.get*() methods to take an optional parameter to return if
+#       the value is not set, and to otherwise use ${NAME:?} to indicate an 
+#       error.  I.e. to discriminate empty values from unset values.
+#       Then revise kube.settings() to use kube.get*() passing "<unset>" 
+#       (possibly with ansi highlighting with "red") as the default value to 
+#       return.
+#       Alternatively, consider when it makes sense to embed the default value
+#       within the .get*() method to avoid duplication of that value at multiple
+#       call sites 
+#       (e.g. kube.getNamespace() which defaults to "maestro-developers").
+#
+# TODO: This filename could stay the same, but considere renaming the functions
+#       that are currently "kube.*" to "ssc.*" or "scp.*" since that better 
+#       represents the scope of the responsibility of these functions.
+#
+# NEEDED FUNCTIONALITY :
+# ====================
+#
+# TODO: Add functions in bash.functions_util to set and persist values that can
+#       be used in other functions as default values if explicit values are 
+#       not provided.
+#
+#       scloud allows setting values [env, tenant, username] which will use them
+#       as default values when explicite values are not specified on the scloud
+#       command line.
+#
+#       ALSO: Where commands might get values from environment variables, 
+#       maintain a timestamp in an environment variable in each shell, and 
+#       provide a function to automatically update the environment variables
+#       if the timestamp on the file where the values are stored is newer 
+#       (or not equal) to the timestamp in the environment variable. 
+#       Call this function before calling any commands that might use the 
+#       values stored in environment variables.
+#
+#       NOTE: (longer-term) many of the values have natural associations /
+#       groupings that it would be useful to reflect. 
+#       E.g. a user is running 3 tenants that each need to have a different 
+#       docker SHA associated.
+#
+# TODO: This won't be needed once I have implemented what is described above,
+#       but this might be a "lighter lift".
+#
+#       add a settings export/import function that can return/take a single 
+#       JSON formatted string that can make it easier to migrate settings 
+#       across shells.
+#
+#       NOTE: This might be most useful on a finer granularity. E.g.
+#       kube.getSearchParams() # to return a json string
+#          and 
+#       kube.setSearchParams() # take a json string parameter and set.
+#
+#       NOTE: This functionality could also be used to export to a "well known"
+#       file where other shells might pick it up as well?
+#
+# TODO: Add a generic "util.selectFrom" method that takes a set of parameters,
+#       allows the user to select one of those values that will be returned, or
+#       otherwise to return with an error code (and not "text" output) if the 
+#       user elects to cancel. Bonus points for also allowing the specification
+#       of one of the values as the default.
+#
+# TODO: Make a simple python utility to allow interactive entering/editing of 
+#       string literals (without requiring escaping) and then setting a 
+#       specified environment variable with that data. Note that it will still 
+#       be the responsibility of consumers of that environment variable to 
+#       escape the string as appropriate for the use-case.
+#
+# Bonus Points :
+# ===================
+#
+# TODO: investigate feasibility of determining the SearchImageSHA's 
+#       that are the current defaults for each image.  If feasible, those can be
+#       set as the defaults and then we automatically deploy only the 
+#       SearchImageSHA's that are different with distinct functionality for 
+#       setting/retrieving each SearchImageSHA.
+#
+# TODO: To better support multple searches, consider embedding some values 
+#       within objects defined given a base-name parameter.  
+#           E.g. kube.search <search_name>
+#       where executing kube.search would then define new functions in the shell
+#       using the name as their base and with the pertinent parameters 
+#       (e.g. sid) encoded within them:
+#           kube.search search1
+#           search1.getStatus
+#           search1.getSid
+#           search1.getResult
+#           search1.remove    // undefine/clear these functions from the shell.
+#           etc.
+#       This could be taken another intermediate step with a flow like:
+#           kube.createSearch search2
+#           // each of these redefines the other functions appropriately.
+#           search2.setQuery "my SPL"
+#           search2.setEarliest 0
+#           search2.setLatest 1
+#           search2.search // this would define the subsequent functions.
+#           search2.getStatus
+#           search2.getResult
+#           search2.remove
+#       Which could then enable copying/sharing that state across shells 
+#       (but with the limitations that consistency is not maintained, the states
+#       reflected in the 2 objects may diverge from that point. E.g. if the 
+#       search has not yet been executed when copied and is then executed in 
+#       each object.
+#           shell1:~/ pbcopy $(search2.getSerialization)
+#           shell2:~/ kube.copySearch search3 $(pbpaste)
+#
+# TODO: To enablue use with discriminated contexts, allow [shared/primary] values
+#       to be stored in a common file, but where each setting can be over-ridden
+#       with an environment variable. (simple in principle, but would require
+#       some moderatly significant work.)
+#
+#       NOTE: This might also imply providing more feedback when commands are 
+#       executed regarding the parameter values used and where they came from.
+#
+# TODO: Can we automate more of the deployment process scripting git commands
+#       and using sed/awk to automate the repetive editing currently used?
+#       e.g. kube.deployBuild <splunkdImageSha>
+#       which could then also set the KubernetesImageSha appropriately.
+#
+################################################################################
+
+################################################################################
+#
+# Informational Notes: (for use in local implementations)
+#
+#       # To retreive logs for all containers in a pod.
+#       kubectl -n maestro-developers --all-containers=true logs searchpeer-jmonschke-7d9b975898-g9rfn > log.txt
+#
+#       kubectl maestro [sub-commands???]
+#          - env <playground | stage | prod>
+#          - namespace <string>
+#          - search   #operate on search resource (searchhead, searchpeer)
+#          - tenant <tenantId>
+#
+#       # To create isolation for SH and SP with the image version: see:
+#       # https://cd.splunkdev.com/core-services/maestro-tenant-controller/blob/master/pkg/workflow/README.md 
+#
+#       see: kubectl describe --help
+#            kubectl describe nodes <node-name>
+#            kubectl describe pods/<pod-name>
+#            kubectl describe pods             # all pods
+#            kubectl describe
+#
+#       **** scloud ****
+#       # see the url below for scloud release notes that indicate what commands
+#       # are added / removed / altered (especially if something stops working).
+#       https://github.com/splunk/splunk-cloud-sdk-go/releases
+#
+#       scloud config [get | list | reset | set ]
+#       allowed keys:
+#       -- primary: [ ca-cert, env, tenant, username ]
+#       -- secondary: [auth-url, host-url, insecure, testhook, testhookdryrun ]
+#
+#       scloud config list          # list all stored key-value pairs.
+#       scloud config reset         # delete all saved settings
+#       scloud config set --key env      --value playground      # or staging, or production
+#       scloud config set --key tenant   --value jmonschke0001
+#       scloud config set --key username --value jmonschke
+#       scloud config get --key <env | tenant | username>
+#
+#       **** kubectl environment variables: ****
+#       $KUBECONFIG           : default ~/.kube/config
+#
+#       **** okta-kube-token environment variables: ****
+#
+# FROM: development page for these tools
+#       OKTA_USERNAME - override okta user which is defaulted to the current username if not set.
+#       OKTA_PASSWORD - login password (use this option securely by setting it from a secret store just before command invocation)
+#       OKTA_API_HOST - hostname of the okta API. Usually of the form org.okta.com.
+#                      -- default to splunkcloud.okta.com
+#       OKTA_DEBUG - when set to true, write debug information to a file in the temp directory.
+#       OKTA_MFA_OPTION - may be set to "push" for automatic push, "token" for Okta code or other provider specific values.
+#       
+# AWS related
+#       OKTA_AWS_EMBED_URL - embed URL of the AWS app set up in Okta
+#       OKTA_AWS_ROLE_ARN - pre-specify the role to assume after login. Useful for headless flows.
+#       
+# Kubernetes/ ID token related
+#       OKTA_TOKEN_AUTH_ENDPOINT - authorization endpoint for obtaining an ID token including the /v1/authorize path
+#               default:  "https://splunkcloud.okta.com/oauth2/aussub41r37XJ3lI42p6/v1/authorize"
+#       OKTA_TOKEN_CLIENT_ID - client ID of the OIDC app to obtain a token
+#       OKTA_TOKEN_REDIRECT_URI - the redirect URI to provide when obtaining an ID token. Does not need to resolve to
+#                                a valid server but must match the setup for the client app in Okta.
+#       OKTA_TOKEN_SCOPES - space-separated string specifying token scopes
+#               default: "openid email groups"
+#       OKTA_KUBE_USER - the username for which to update the token in the kubernetes config
+#               default: "dev@splunk"
+#
+# NOTES: apps for control:
+#       kubectl
+# SPLUNK APPS : (installed via brew from splunk tap)
+#       cloudctl (splunk -- cloudworks (enterprise) )
+#       sadmin (splunk) (is this just meant for administrating real customers?)
+#       scloud (splunk CLI for splunk services rest APIs)
+#       kubectl-maestro (splunk plugin for kubernetes)
+#       okta-kube-token (Okta token management for kubectl (NOT an IAC token) ).
+#
+#       okta-aws          (not currently used)
+#       okta-aws-login    (not currently used)
+#       okta-docker-login (not currently used)
+#
+################################################################################
+
+###############################################
+# bash shell functions specific to the splunk build or execution environment.
+###############################################
+
+source "${DOTFILES_DIR:?}"/bash.functions_util
+
+###############################################
+# Show / list all kube.* commands
+###############################################
+kube.() { bash.show_functions 'kube\.' ; }
+
+kube.help()
+{
+#    local help_text
+#    help_text="$(cat <<-DONE 
+#    pod       : a collection of containers that can run on a host. 
+#                This resource is created by clients and scheduled onto hosts.
+#    namespace : TODO: 
+#    sha       : The sha generated by maestro during the final building of the 
+#                kubernetes image. Used to identify an image to deploy 
+#    DONE
+#    )
+#    echo.banner "${help_text}"
+
+    echo.banner \
+   " accessToken   : TODO\n" \
+    "debug         : \"true\" || \"false\" to enable debug output from the \n" \
+    "                 underlying tool.\n" \
+    "context       : playground / staging / production \n" \
+    "cluster       : TODO\n" \
+    "pod           : a collection of containers that can run on a host. \n" \
+    "                This resource is created by clients and scheduled onto hosts.\n" \
+    "namespace     : TODO\n" \
+    "                is context namespace discrete a discrete usage from \n" \
+    "               \"maestro-developer\" ?\n" \
+    "sha           : The sha generated by maestro during the final building of the \n" \
+    "                kubernetes image. Used to identify an image to deploy \n" \
+    "image         : TODO\n" \
+    "tenant        : TODO\n" \
+    "podName       : TODO\n" \
+    "containerName : TODO\n" \
+    "suffix        : TODO\n" \
+    "User          : TODO\n" \
+    "Username      : TODO\n" \
+    "Pipelines     : TODO\n" \
+    "************************\n" \
+    "*** Search Parametes ***\n" \
+    "************************\n" \
+    "SearchEarliest : TODO\n" \
+    "SearchLatest   : TODO\n" \
+    "SearchQuery    : TODO\n" \
+    "SearchSync     : TODO" 
+}
+
+###############################################
+# show all values of local get/set settings.
+#
+# TODO: when a value is missing, add text for which other functions require the
+#       value (i.e. what other functions will be disabled).
+# TODO: Since I removed the explicit checks for presence in the get*() functions
+#       either: 1) Add appropriate checks for missing values where they are used 
+#       revise the get() functions to set the error-code (but not to require
+#       non-empty values).
+###############################################
+kube.settings()
+{
+    echo "  IAC AccessToken = \"$(kube.getIacToken)\""
+    echo " "
+
+    # echo "OKTA AccessToken = \"$(kube.getOktaToken)\""
+    # echo " "
+
+    $(kube.getDebug) && \
+    echo "             Debug = \"true\"" || \
+    echo "             Debug = \"false\""
+
+    echo "       Environment = \"$(kube.getEnvironment)\""
+    echo "         Namespace = \"$(kube.getNamespace)\""
+    echo "KubernetesImageSha = \"$(kube.getKubernetesImageSha)\""
+    echo "  Isolation Suffix = \"$(kube.getSuffix)\""
+    echo "            Tenant = \"$(kube.getTenant)\""
+    echo "         IAC  User = \"$(kube.getUser)\""
+    echo "      IAC Username = \"$(kube.getUsername)\""
+    echo "   Kubernetes User = \"$(kube.getKubernetesUser)\""
+    echo " "
+    echo "    SearchEarliest = \"$(kube.getSearchEarliest)\""
+    echo "      SearchLatest = \"$(kube.getSearchLatest)\""
+    echo "       SearchQuery = \"$(kube.getSearchQuery)\""
+    echo "        SearchSync = \"$(kube.getSearchSync)\""
+}
+
+###############################################
+###############################################
+_kube.selectTenant_todo()
+{
+    TODO
+
+    # returns a Json Array of objects.  We need to retrive the "name" field 
+    # from each of those objects to provide a list of tenants that the user 
+    # can use and allow them to select which one to use.
+    scloud provisioner list-tenants
+}
+
+
+################################################################################
+################################################################################
+# Store and Retrieve values / settings
+#
+# Settings: 
+#  -- Context   [playground, staging, production]
+#  -- TenantId
+#  -- User      <user>
+#  -- UserName  <user@splunk.com>
+#  -- Suffix    <text appended to names>
+#  -- Sha       <of image to install>
+################################################################################
+################################################################################
+kube.setIacToken()
+{
+    # TODO: add keyword option of "PASTE" to use $(pbpaste) to retrieve the 
+    #       token from the cut-and-paste buffer.
+    # TODO: is it feasible to add basic validation that the parameter is a 
+    #       "token" (whether or not it is a "valid" token).
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} user\n" || return 2
+    [[ -e ~/.iac_token.txt ]] && rm -rf ~/.iac_token.txt
+
+    # persist to a ~/.file, ensuring that access is restricted before writing 
+    # the token.
+    command touch ~/.iac_token.txt && \
+    command chmod 600 ~/.iac_token.txt && \
+    echo "${1}" > ~/.iac_token.txt
+
+    # also set the value as the default token for scloud.
+    # NOTE: sadmin does not have any corresponding facility.
+    # NOTE: (from a confluence comment)
+    #       May be worth mentioning that including
+    #       --tenant sometenant  
+    #       --env testenv 
+    #       are necessary for this to work. At least that was the case for me.
+     scloud context set --key access_token --value ${1}
+}
+
+kube.validateIacToken()
+{
+    [[ "" == "$(kube.getTenant)" ]] \
+        && echo "Tenant must be set first" && return 2
+        
+    # Requires that the "tenant" be set to a valid value before it can validate
+    # the token. On success returns a json object containing 
+    # {"clientId": , "kind": , and "name" : }
+    scloud identity validate-token \
+    || echo "error, tenant name may not be valid" && return 2
+}
+
+kube.getIacToken()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                 "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    command cat ~/.iac_token.txt
+}
+
+_kube.getOktaToken_todo()
+{
+    TODO          
+    #add code to parse from ~/.kube/config and return.
+    # cat ~/.kube/config | grep token: | <everything after to eol>
+}
+
+kube.getEnvironment()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # NOTE: scloud 2.x is outputting the result to stderr.
+    scloud config get --key env 2>&1
+ }
+
+kube.setUser()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} user\n" || return 2
+     export KUBE_USER="${1}"
+}
+
+kube.getUser()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_USER}"
+}
+
+kube.getUsername()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # NOTE: scloud 2.x is outputting the result to stderr.
+    scloud config get --key username 2>&1
+}
+
+kube.setKubernetesImageSha()
+{
+    util.assert_argc 1 $# "${funcname[0]}" \
+                     "usaGE:\n${FUNCNAME[0]} <SearchImageSHA>\n" || return 2
+     export KUBE_SearchImageSHA="${1}";
+}
+
+kube.getKubernetesImageSha()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_SearchImageSHA}"
+}
+
+kube.setSuffix()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <suffix>\n" || return 2
+    export KUBE_SUFFIX="${1}"
+}
+
+kube.getSuffix()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_SUFFIX}"
+}
+
+kube.setTenant()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <tenant name>\n" || return 2
+    scloud config set --key tenant --value "${1}"
+}
+
+kube.getTenant()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # NOTE: scloud 2.x is outputting the result to stderr.
+    scloud config get --key tenant 2>&1
+}
+
+kube.setNamespace()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <namespace>\n" || return 2
+    export KUBE_NAMESPACE="${1}"
+}
+
+kube.getNamespace()
+{
+    # TODO: add /move logic that provides a default of maestro=developers if 
+    # KUBE_NAMESPACE is not set to something explicitly.
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_NAMESPACE:-maestro-developers}"
+}
+
+kube.setSearchQuery()
+{
+    # NOTE: For now, this will take only a single parameter which will be 
+    #       expected to be properly escaped if necessary.  I do not think it 
+    #       will be feasible to take multiple parameters in a way that the CLI
+    #       usage could be used directly as SPL since "quoted literals" on that
+    #       command line will have the quotes stripped by bash. It might become
+    #       feasible if I can find a mechanism that would allow me to preserve
+    #       un-escaped quotes in the parameters of this function. 
+    #
+    # NOTE: because the search query string parameter may include things like 
+    #       string literals, it will be important to figure out and maintain
+    #       the escaping of this value (and also avoid double escaping).
+
+    # TODO: Is there an API that we can use to pre-validate the SPL at this point
+    #       without submitting as a search ?
+    #       -- If that validation would also require earliest/latest values,
+    #          then we might want to validate (without submitting) by using 
+    #          earliest = 0 and latest = now
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <\"search query\">\n" || return 2
+    export KUBE_SEARCH_QUERY=${1}
+}
+
+kube.getSearchQuery()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                 "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_SEARCH_QUERY}"
+}
+
+kube.getSearchQuery@Q()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                 "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_SEARCH_QUERY@Q}"
+}
+
+kube.setSearchEarliest()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <search earliest>\n" || return 2
+    export KUBE_SEARCH_EARLIEST="${1}"
+}
+kube.getSearchEarliest()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                 "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_SEARCH_EARLIEST}"
+
+}
+kube.setSearchLatest()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <search latest>\n" || return 2
+    export KUBE_SEARCH_LATEST="${1}"
+}
+kube.getSearchLatest()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                 "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    echo "${KUBE_SEARCH_LATEST}"
+}
+
+kube.setSearchSync()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} < async | sync | wait >\n" || return 2
+    # one of "sync" "wait" or "async"
+    if _kube.validateSearchSync "${1:?}" ; then
+        export KUBE_SEARCH_SYNC="${1}"
+    else
+        echo.error "value must be one of \"async\", \"sync\", or \"wait\"\n";
+    fi
+}
+
+kube.getSearchSync()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                 "USAGE:\n${FUNCNAME[0]}\n" || return 2
+
+    local sync
+    sync="${KUBE_SEARCH_SYNC}" # $(scloud config get --key _searchSync)"
+    # if not set, then set to default value of "sync" and return that value.
+    if [[ "${sync}" == "" ]]; then
+        kube.setSearchSync "sync"
+        echo "sync"
+    elif _kube.validateSearchSync "${sync}"; then
+        echo "${sync}"
+    else
+        echo.error "invalid value found : \"${sync}\""
+    fi
+}
+
+################################################################################
+################################################################################
+# Show single-value data
+# List multi-valued data 
+# from the current context/environment
+################################################################################
+################################################################################
+
+kube.showMember()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <username>\n" || return 2
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) identity get-member --member "${1}"
+}
+
+kube.listMembers()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) identity list-members
+}
+
+kube.getKubernetesUser()
+{
+    kubectl config view -o jsonpath='{.users[*].name}'
+    # the line below also prepends a line with "NAME" that we would have to 
+    # filter / parse out...
+    # kubectl config get-users 
+}
+
+###############################################
+# list all Tenants in the current context for the current user.
+###############################################
+kube.listTenants()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) provisioner list-tenants
+}
+
+kube.listContexts()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    kubectl config get-contexts
+}
+
+###############################################
+# list all running pods with an optional parameter to filter the results on.
+#
+# TODO: Revise to be able to take more than 1 parameter where all parameters are
+#       applied as discrete filtering terms that must all be met.
+#       I.e. via sequential applications of grep.
+# TODO: add a kube.selectPod() function that is parallel to / client of this
+#       function that takes the same parameters, passes them to this function, 
+#       but which then provides an interactive interface for selecting one of 
+#       the pods and then making the sellected pod name the final "result" from
+#       the function.
+#
+#       Consider whether that function can be decomposed into a more generic
+#       method for providing generic / non-specific functionality and the 
+#       primary method that specializes / reifies the generic function for this
+#       specific use-case.
+###############################################
+kube.listPods()
+{
+    # 1 argument or no arguments are acceptable, 2 or more are not.
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} [filterText]\n" || return 2
+    local pods
+    pods="$(kubectl -n $(kube.getNamespace) get pods)"
+    if [[ $# -eq 0 ]] ; then
+        echo "${pods}"
+    else
+        echo "${pods}" | grep "${1}"
+    fi
+}
+
+###############################################
+# list all running images ending "-${USER}"
+###############################################
+_kube.listImages_todo() 
+{
+    TODO
+}
+
+
+kube.listPipelines()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) streams list-pipelines 
+}
+
+kube.listMembers()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) identity list-members 
+}
+
+################################################################################
+################################################################################
+# The Meat :
+################################################################################
+################################################################################
+
+###############################################
+#
+###############################################
+kube.createTenant()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+            "USAGE:\n${FUNCNAME[0]} <newTenant>\n" || return 2
+
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) provisioner create-provision-job --tenant "${1}" && \
+    kube.setTenant "${1}" 
+#
+#    TODO
+#
+#    local context,api, accessToken, authorization, payload
+#    context="$(scloud config get --key env)"
+#    target="https://api.${context}.scp.splunk.com"
+#    rest_api="/system/provisioner/v1beta1/jobs/tenants/provision"
+#    api="${target}${rest_api}"
+#    access_token="ACCESS TOKEN GOES HERE"    # TODO:
+#    authorization="Authorization: Bearer ${access_token}"
+#    tenant_name="$(kube.getTenant)"
+#    payload="{ \"tenant\": \"${tenant_name}\" }"
+#
+#    echo curl -X POST "${api}" -H "${authorization}" -d "${payload}"
+}
+
+kube.showTenant()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+            "USAGE:\n${FUNCNAME[0]} <tenant>\n" || return 2
+
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) provisioner get-tenant --tenant-name "${1}" 
+}
+
+kube.invite()
+{
+    # at least 1 argument, should all be email addresses.
+    util.assert_argc_ge 1 $# "${FUNCNAME[0]}" \
+            "USAGE:\n${FUNCNAME[0]} <email address> [<email address> [...] ]\n" || return 2
+
+    while (( $# > 0 ))
+    do
+        # options are:
+        # --email string   (required parameter)
+        # --comment string
+        # --groups string
+        scloud provisioner create-invite --email ${1} 
+        shift
+    done
+}
+
+
+###############################################
+# retrieve the pod-name, given an image-name
+# TODO: rename (this is ambiguous)
+###############################################
+kube.getImagePod()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <image>\n" || return 2
+
+    local image deployment pod
+    image="${1}"
+    deployment="$(_kube.makeDeploymentName "${image}" )"
+    pod="$(kubectl get pods -l run=${deployment} \
+           -o=custom-columns=:metadata.name --no-headers )"
+    echo "${pod}"
+}
+
+###############################################
+# setup port-fowarding for a pod based on pod-name
+# TODO: add optional parameters to specify different source/destination ports.
+###############################################
+kube.pod_portForward()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <pod-name>\n" || return 2
+
+    local pod
+    pod="${1}"
+    kubectl port-forward "${pod}" 8888:80
+}
+
+###############################################
+# get list of Pods from kube.listPods(); apply any filters that are specified;
+# display the resulting list; provide an interactive menu for selecting one 
+# value from that list and return that pod name as the result of this function
+# call. (Since this is interactive, it may be necessary to return the value in
+# an environment variable that is passed in as a parameter by name 
+# (of the environment variable).
+###############################################
+_kube.pod_select_todo()
+{
+    TODO
+
+    # I will probably want to implement a generic menu selection facility
+    # in the "util." namespace in bash.functions_util.
+}
+
+###############################################
+# initialize a pod running the specified image
+###############################################
+kube.deployImage()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <image-name>\n" || return 2
+
+    local image deployment
+    image="${1}"
+    deployment="$(_kube.makeDeploymentName ${image} )"
+    kubectl -n $(kube.getNamespace) run "${deployment}" --image "${image}"
+}
+
+###############################################
+# delete a pod based on image-name or pod-name
+# TODO: rename (this is ambiguous)
+###############################################
+_kube.deleteImage_todo()
+{
+    TODO
+
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <image>\n" || return 2
+
+    local image deployment
+    image="${1}"
+    deployment="$(_kube.makeDeploymentName ${image} )"
+    kubectl -n $(kube.getNamespace) delete deployment "${deployment}"
+}
+
+
+###############################################
+# undeploy a deployment 
+###############################################
+_kube.undeploy_todo()
+{
+    TODO
+
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <podName>\n" || return 2
+
+    local pod
+    local namespace 
+    pod=${1:?}
+    namespace="$(kube.getNamespace)"
+
+    kubectl  maestro --search \
+                     --searchVersion "$(kube.getKubernetesImageSha)" \
+                     --isolationSuffix "$(kube.getSuffix)" \
+                     --tenant "$(kube.getTenant)" \
+                     --workflow dev create
+}
+
+###############################################
+# change the image sha associated with a current deployment 
+# and cause maestro to update accordingly. 
+###############################################
+_kube.redeploy_todo()
+{
+    TODO
+
+    # You mean replace with a new image right ?
+
+    # kubectl -n maestro-develeopers edit mr dev-search-<isolationSuffix>
+
+    # find mt-search and replace the image tag with the new version ... 
+    # there's one for SH and one for SP
+
+    # TODO: Can this be automated using sed instead of vi?
+}
+
+
+###############################################
+# delete a pod based on  pod-name
+###############################################
+_kube.deletePod_todo()
+{
+    TODO
+
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <podName>\n" || return 2
+
+    local pod
+    local namespace 
+    pod=${1:?}
+    namespace="$(kube.getNamespace)"
+
+    # [ashish] Or to recreate a new isolation you can do
+    # kubectl -n "${namespace}" delete mr dev-search-<suffix>
+}
+
+
+###############################################
+# deploy an image out into playground based on values stored with:
+# kube.setTenant
+# kube.setKubernetesImageSha (the long-sha from the logs during mastro configuration)
+# kube.setSuffix (the name suffix)
+# NOTE: Also use this for restarting an image.
+#
+# TODO: this is currently specific to setting searchVersion, make more flexible
+#       so that it can also specify specific versions of other aspects.
+###############################################
+kube.deploy()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+
+    kubectl maestro --namespace "$(kube.getNamespace)" \
+                    --search \
+                    --searchVersion "$(kube.getKubernetesImageSha)" \
+                    --isolationSuffix "$(kube.getSuffix)" \
+                    --tenant "$(kube.getTenant)" \
+                    --workflow dev create
+}
+
+###############################################
+# variant on above that ignores any SearchImageSHA value that has been set and
+# always installs the default executable for the specified environment.
+###############################################
+kube.deployDefaults()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+
+    kubectl maestro --namespace "$(kube.getNamespace)" \
+                    --search \
+                    --isolationSuffix "$(kube.getSuffix)" \
+                    --tenant "$(kube.getTenant)" \
+                    --workflow dev create
+}
+
+###############################################
+# create a pipeline
+# TODO
+###############################################
+_kube.createPipeline_todo()
+{
+    TODO
+
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]}\n" || return 2
+
+    # EX: (see: https://workshop.eng.splunkdev.com/doc/6iykR7i1gIc6y4E1/ingest.html
+    #
+    # scloud streams compile-dsl -dsl-file passthrough.dsl >passthrough.upl
+    # scloud streams create-pipeline \
+    #                -name passthrough \
+    #                -bypass-validation true \
+    #                -data-file passthrough.upl
+}
+
+###############################################
+# run a search.
+# The search is currently set through kube.setSearchQuery
+# The earliest, latest, sync, and wait are currently fixed.
+#
+# TODO: Validate that the inptut of SPL works the same wither as a parameter
+#       to this function, or setting via kube.setSearchQuery.
+#
+# TODO: create corresponding kube.setSearch* methods to set defaults for all
+#       of these and provide a means to override any of them on the 
+#       command-lien.
+#
+# TODO: sync and wait should probably be condensed into a single 3-value state
+#       of [ async, syncAndReturn, syncAndShow ]
+#       "-sync true" might be the default
+#
+# TODO: capthre the output from the `scloud search` command into a local 
+#       variable and retrieve/parse the "sid: " value from the returned 
+#       (successful) output and persist it as "lastSID".  
+#       Also, if an error is indicated, then output the full returned text.
+#       -- consider (also) persisting as a stack if multiple simultaneous 
+#          searches need to be supported. 
+#       -- consider outputing/echoing the sid as the output of this function 
+#          (in the abscense of an error).
+#
+###############################################
+kube.search()
+{
+    # shopt -s extdebug
+    util.assert_argc_between 0 1 $# "${FUNCNAME[0]}" \
+         "USAGE:\n${FUNCNAME[0]} [\"search to run\"]\n" || return 2
+
+    local search_query
+    search_query=${1@Q}
+    [[ "${search_query}" == "" ]] && search_query="$(kube.getSearchQuery)"
+    echo search_query   = ${search_query}
+    echo search_query@Q = ${search_query@Q}
+
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) search create-job \
+           --earliest "$(kube.getSearchEarliest)" \
+           --latest "$(kube.getSearchLatest)" \
+           --query "${search_query}" 
+           # $(_kube.getSearchSync_option) \
+           # $(_kube.getSearchWait_option)
+    # shopt -u extdebug
+}
+
+###############################################
+# get the status of a search.
+# TODO: consider adding parsing of the returend data
+###############################################
+kube.getSearchStatus()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+         "USAGE:\n${FUNCNAME[0]} <sid>\n" || return 2
+
+    local sid
+    sid=${1}
+    scloud $(_kube.debug_opt) search get-job --sid $sid
+}
+
+###############################################
+# get the result of a search.
+# NOTE: When there are multiple pages of results, this is currently limited to
+#       retrieving the first page of those results.
+# TODO: handle links to "next data" appropriately. Consider support of paging, 
+#       and/or retrieving all results and aggregating them appropriately.
+###############################################
+kube.getSearchResult()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+         "USAGE:\n${FUNCNAME[0]} <sid>\n" || return 2
+
+    local sid
+    sid=${1}
+    scloud $(_kube.debug_opt) --timeout 600 search list-results --sid $sid
+}
+
+###############################################
+# start minio (S3 emulation) assuming it is available.
+#
+# INFO/NOTES: 
+# -- To have launchd start minio now and restart at login:
+#       brew services start minio
+#    Or, if you don't want/need a background service you can just run:
+#       minio server
+# -- port range 9000:9010 may need to be enabled if blocket by firewall
+#    (but probably only needed to access from a different computer).
+# -- See : 
+#       https://docs.min.io/docs/minio-server-configuration-guide.html
+#       https://docs.min.io/docs/minio-client-quickstart-guide.html
+#    -- to get a complete list of available minio configuration keys, use:
+#      `mc admin config set myminio/ `
+#    -- tp get a list of Environment variable equivelents to those settings use:
+#      `mc admin config set myminio/ --env`
+###############################################
+kube.minio.setEnv()
+{
+    export MINIO_REGION="${MINIO_REGION:-us-west-2}"
+    export MINIO_ACCESS_KEY="${MINIO_ACCES_KEY:-minio}"
+    export MINIO_SECRET_KEY="${MINO_SECRET_KEY:-miniostorage}"
+    export MINIO_BROSWER="${MINIO_BROWSER:-on}"
+    # export MINIO_DOMAIN=sub1.mydomain.com,sub2.mydomain.com
+    export MINIO_HOST_myminio="https://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@localhost:9000" 
+    export MINIO_DISK="${MINIO_DISK:-/Users/jmonschke/MinioDisk}"
+}
+
+kube.minio.clientInit()
+{
+    # NOTE: (I think...) this will need to be run in each shell from wihch 
+    #       mc will be run.
+    kube.minio.setEnv
+
+    # NOTE: If the MINIO_ACCESS_KEY and MINO_SECRET_KEY are ommitted from the
+    #       command line, then they will be prompted for on the command line.
+
+    mc alias set myminio "http://127.0.0.1:9000" \
+        "${MINIO_ACCESS_KEY}" \
+        "${MINIO_SECRET_KEY}" \
+        --api S3v4
+}
+kube.minio.serverStart()
+{
+    local usage
+    usage="USAGE:\n${FUNCNAME[0]}\n"
+
+    util.assert_argc 0 $# "${FUNCNAME[0]}" "${usage}" || return 2
+
+    # TODO: check for presence of minio, mc and any dependencies 
+    #       and indicate appropriate error if not present.
+
+    # set environment variables that minio will need.
+    kube.minio.setEnv
+
+    minio server "${MINIO_DISK}" >/dev/null 2>&1 &
+
+    # TODO : Add a more reliable check that the server is up.
+    #        For now, just sleeping for 5 seconds.
+    sleep 5
+    # kube.minio.mc_init
+}
+
+_kube.minio.serverStop_todo()
+{
+    # Add code to properly/cleanly bring down the minio service.
+    TODO
+}
+
+
+###############################################
+# execute a command on a container in a pod.
+# NOTES:
+# -- defaults to the 'splunk' container if the parameter is not specified.
+###############################################
+kube.pod_exec()
+{
+    util.assert_argc_between 2 3 $# "${FUNCNAME[0]}" \
+              "USAGE:\n${FUNCNAME[0]} \"command to execute\" <podName> [containerName]\n" \
+              "   containerName parameter will default to 'splunk' if not set\n" \
+              || return 2
+    local exec_command
+    local pod
+    local container
+    local namespace
+
+    exec_command="${1:?}"
+    pod="${2:?}"
+    container="${3:-splunk}"
+
+    # NOTE: -i and -t control redirection of stdin/stdout/stderr
+    #
+    # TODO: add options to prepend the command with "source ./bin/setSplunkEnv;"
+    #       to setup environment variables (and a parameter or variant of this
+    #       method so that this behavior could be enabled or disabled).
+    kubectl -n "$(kube.getNamespace)" exec "${pod}" -c "${container}" -i -t -- "${exec_command}"
+}
+
+
+###############################################
+# copy files to/from  a container in a pod.
+# NOTES:
+# -- defaults to the 'splunk' container if the parameter is not specified.
+###############################################
+_kube.pod_cp_todo()
+{
+    TODO
+
+    util.assert_argc_between 2 3 $# "${FUNCNAME[0]}" \
+              "USAGE:\n${FUNCNAME[0]} \"command to execute\" <podName> [containerName]\n" \
+              "   containerName parameter will default to 'splunk' if not set\n" \
+              || return 2
+    local pod
+    local container
+    local namespace
+
+    pod="${2:?}"
+    # retrieve a container name if specified and default to 'splunk' if not set.
+    container="${3:-splunk}"
+
+    # NOTE: -i and -t control redirection of stdin/stdout/stderr
+    #
+    # TODO: add options to prepend the command with "source ./bin/setSplunkEnv;"
+    #       to setup environment variables (and a parameter or variant of this
+    #       method so that this behavior could be enabled or disabled).
+    kubectl -n "$(kube.getNamespace)" cp "${pod}":${remoteFiles} ${localDestination} -c "${container}" -i -t --
+}
+
+kube.pod_cp_from()
+{
+    util.assert_argc 3 $# "${FUNCNAME[0]}" \
+              "USAGE:\n${FUNCNAME[0]}  <podName> <remote_path> <local_path>\n" \
+              || return 2
+    local pod remote_path local_path
+
+    pod="${1:?}"
+    remote_path="${2:?}"
+    local_path="${3:?}"
+
+    # NOTE: -i and -t control redirection of stdin/stdout/stderr
+    #
+    # TODO: add options to prepend the command with "source ./bin/setSplunkEnv;"
+    #       to setup environment variables (and a parameter or variant of this
+    #       method so that this behavior could be enabled or disabled).
+    kubectl -n "$(kube.getNamespace)" cp "${pod}":${remote_path} ${local_path} -i -t --
+}
+
+###############################################
+# remote login to a container in a pod.
+# NOTES:
+# -- defaults to the 'splunk' container if the parameter is not specified.
+###############################################
+kube.pod_shell()
+{
+    util.assert_argc_between 1 2 $# "${FUNCNAME[0]}" \
+              "USAGE:\n${FUNCNAME[0]} <podName> [containerName]\n" \
+              "   containerName parameter will default to 'splunk' if not set\n" \
+              || return 2
+
+    local pod
+    local container
+    local namespace
+    pod="${1:?}"
+    # retrieve a container name if specified and default to 'splunk' if not set.
+    container="${2:-splunk}"
+
+    #
+    # TODO: add options to bash to also "source ./bin/setSplunkEnv" to setup 
+    #       environment variables (and a parameter or variant of this method so
+    #       that this behavior could be enabled or disabled).
+    #
+    # TODO: refactor the command below to use kube.pod_exec() instead.
+    #
+    # NOTE: -i and -t control redirection of stdin/stdout/stderr
+    kubectl -n "$(kube.getNamespace)" exec "${pod}" -c "${container}" -i -t -- bash
+}
+
+###############################################
+# future command to support copying files back and forth to a container.
+###############################################
+# kube.container_fileCopy()
+# {
+#   util.assert_argc_between 1 2 $# "${FUNCNAME[0]}" \
+#             "USAGE:\n${FUNCNAME[0]} <srcFilePath> <dstFilePath> [pod_name]\n"
+#             || return 2
+#    # use as a basis for scripting... (command below from Ashish).
+#    local src         #full path to source file
+#    local dest        #full path to destination (e.g. /opt/splunk/bin)
+#    local pod_name
+#    src="${1:?}"
+#    dest=${2:?}"
+#    pod_name=${3:-$(kube.getPodName)}
+#
+#    # TODO: I suspect that "splunk-search" in command below will not be 
+#    #       quite correct...
+#    kubectl cp "${src}" "splunk-search/${pod_name}:${dest}"
+# }
+
+
+_kube.setPodName_todo()
+{
+    TODO
+}
+
+_kube.getPodName_todo()
+{
+    TODO
+}
+
+_kube.setContainerName_todo()
+{
+    TODO
+}
+
+_kube.getContainerName_todo()
+{
+    TODO
+}
+
+
+###############################################
+# provides extensive information on all of the containers in the specified pod.
+###############################################
+kube.podDescribe()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <podName> \n" || return 2
+    local pod
+    pod="${1:?}"
+    kubectl -n "$(kube.getNamespace)" describe pod "${pod}"
+}
+
+
+###############################################
+# allow editing "mr"; primary use is to replace the SearchImageSHA for a 
+# deployment
+#
+# NOTE: Using this functionality will implicitly shutdown any pods currently
+#       running with this MR and restart them with no explicite action needed.
+#
+# TODO: Clarify (and document) if all SHA's in the MR should be replaced, or 
+#       only for the deployed image of interest (or another subset) and why.
+#
+# TODO: clarify (somewhere) what MR stands for...
+#
+# TODO: modify to take an optional SHA parameter (possibly with the resources
+#       to apply it to) and automate replacing of the SHA in the MR using sed.
+#       -- figure out how to have kubectl execute a scripted command rather 
+#          than "vi" to edit the file. Most likely kubectl is grabbing from 
+#          the environment variables which we may be able to override with a 
+#          local variable, or otherwise use a scoped save/change/restore
+#          functionality.
+#       -- will likely take some work without having the old sha to use in the 
+#          "find-patern". Might need to do it in 2 stages, one to parse the
+#          existing SHA, and then a 2nd stage with sed to find&replace.
+#       -- This will become [much more | too] difficult if we need to restrict
+#          the substitutions to anything less thant every instance.
+#
+#       sed -i s/<find-pattern>/<replace-pattern>/g file
+###############################################
+kube.edit_mr_and_redeploy()
+{
+    util.assert_argc 0 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} \n" || return 2
+    kubectl -n "$(kube.getNamespace)" edit mr "dev-search-$(kube.getSuffix)"
+}
+
+###############################################
+# functions to formulate the URL to use to access web functionality for the
+# specified environment and tenant. 
+# If run on Mac, also automatically open in the default web browser application.
+#
+# TODO: in the case that this is production, then we need to omit the 
+#       environment rather than specifying "production".
+# TODO: Consider the degree to which the URL's are common and whether I should
+#       refactor the common portion into a separate _splunk.*() function.
+###############################################
+kube.url_streaming()
+{
+    local url
+    url="https://streaming.$(kube.getEnvironment).scp.splunk.com/$(kube.getTenant)"
+    echo $url
+    open $url
+    [[ $(which open) ]] && open $url
+}
+
+kube.url_console()
+{
+    local url
+    url="https://console.$(kube.getEnvironment).scp.splunk.com/$(kube.getTenant)"
+    echo $url
+    [[ $(which open) ]] && open $url
+}
+
+
+kube.url_settings()
+{
+    local url
+    url="https://console.$(kube.getEnvironment).scp.splunk.com/$(kube.getTenant)/settings"
+    echo $url
+    [[ $(which open) ]] && open $url
+}
+
+
+kube.url_S3()
+{
+    local url
+    url="https://s3.console.aws.amazon.com/s3/buckets/maestro-output-data?region=us-west-2&prefix=$(kube.getTenant)/&showversions=false"
+    echo $url
+    [[ $(which open) ]] && open $url
+}
+
+
+###############################################
+# send a file in a specified format to a specified tenantId (optional parameter)
+# USAGE: 
+#    kube.ingestFile <format (raw, json, event)> <filename> [tenantId]
+# EX:
+#    kube.ingestFile json filename.json jmonschke0001
+#
+# format (raw, json, event) : 
+# raw:  The command interprets each line of input as a single line of raw
+#       text event data.
+# json: The command interprets each line of input as a single JSON object
+#       and posts it as structured JSON event data.
+# event: The command interprets each line of input as a JSON object that
+#        represents a fully formed event object, including body and event
+#        metadata. 
+# SEE:  (especially regarding expected format of "event" input)
+# https://dev.splunk.com/scs/reference/api/ingest/v1beta2#endpoint-postEvents=
+#
+# If a tenantId parameter is not specified, it will attempt to retrieve the 
+# tenant name from the scloud cache.
+#
+# TODO: allow optionally specifying a "source" and "sourcetype" through 
+#       kube.set* functions and/or through optional CLI parameters following the
+#       filename.
+# TODO: scloud basically works (but may need updating), but "http" is currently
+#       only working for "events".  I need to (re)work this to provide something
+#       that works for each of the 3 formats (and figure out which I prefer for
+#       that, "scloud" or "http").
+###############################################
+kube.ingestFile()
+{
+    local usage
+    usage="USAGE:\n${FUNCNAME[0]} <format (raw | json | event)> <filename>\n"
+
+    util.assert_argc 2 $# "${FUNCNAME[0]}" "${usage}" || return 2
+
+    local filename \
+          host       host_option \
+          source     source_option \
+          sourcetype sourcetype_option \
+          format     format_option 
+
+    # NOTE: host, source and sourcetype can be set ONLY when format != "event"
+    #       because those values should be set explicitly within the input
+    #       stream in that case.
+    format="$1"
+    if [[ "${format}" != "json" ]] && \
+       [[ "${format}" != "raw" ]] && \
+       [[ "${format}" != "event" ]]
+    then
+       echo.error "invalid format specification. Use one of (json, raw, event).\n\n" 
+       echo "${usage}"
+       return 2
+    fi
+
+    filename="${2}"
+    util.assert_notEmptyFile ${filename}
+
+    # The tenantId should be set inside the scloud cache.
+    if [[ "" == "$(kube.getTenant)" ]]; then
+        echo.error "You must use kube.setTenant to specify the tenant"
+        return 2
+    fi
+
+    #############################
+    # TODO: This implementation is based on "httpie" rather than scloud.
+    #      
+    #       It short-circuits the scloud implementation by the "return"
+    #       statement.
+    #
+    #       This currently only supports the "event" type and does not yet 
+    #       support the "json" or "raw" formats. 
+    #############################
+    local http_options url_target url_path url # headers
+    url_target="api.$(kube.getEnvironment).scp.splunk.com"
+    url_path="/$(kube.getTenant)/ingest/v1beta2/events"
+    url="https://${url_target}${url_path}"
+    # headers="Authorization: Bearer $(kube.getIacToken)"
+    http_options="--pretty all --stream --check-status"
+    # shellcheck disable=SC2091
+    $(kube.getDebug) && http_options="${http_options} --verbose"
+
+    # '@' is reading the file and embedding it, although the --help for http
+    # does not clearly document this.
+    # shellcheck disable=SC2086
+    # shellcheck disable=SC2090
+    http ${http_options} "${url}" \
+         Authorization:" Bearer $(kube.getIacToken)" \
+         @"${filename}"
+    return
+
+    #############################################
+    # The code below is older, but this code is still in development.
+    # It is short-circuited by the "return" above.
+    #############################################
+
+    # host       : The host value assigned to the event data. Typically, this is
+    #              the hostname of the client from which you are sending data.
+    # source     : The source value to assign to the event data. For example, if
+    #              you are sending data from an app that you are developing, set
+    #              this key to the name of the app.
+    # sourcetype : The sourcetype value assigned to the event data (???)
+
+    if [[ "${format}" == "event" ]]; then
+        # ONLY set host, source or sourcetype when format is ! event
+        host=""
+        source=""
+        sourcetype=""
+    else
+        host="${HOST:-$(hostname)}"
+        source=""        # TODO
+        sourcetype=""    # TODO
+    fi
+
+    format_option=" -format ${format:?}"
+
+    # these are optional, specify the option only if the variable is not-empty.
+    host_option="${host:+ -host ${host}}"
+    source_option="${source:+ -source ${source}}"
+    sourcetype_option="${sourcetype:+ -sourcetype ${sourcetype}}"
+
+    all_ingest_options="${host_option}${source_option}${sourcetype_option}${format_option}"
+
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) --timeout 600 \
+           ingest post-events "${all_ingest_options}" < "${filename}"
+}
+
+
+kube.ingestRawFile()
+{
+    local usage
+    usage="USAGE:\n${FUNCNAME[0]} <filename>\n"
+
+    util.assert_argc 1 $# "${FUNCNAME[0]}" "${usage}" || return 2
+
+    local filename \
+          host       host_option \
+          source     source_option \
+          sourcetype sourcetype_option \
+                     format_option 
+
+
+    filename="${1}"
+    util.assert_notEmptyFile ${filename}
+
+    # The tenantId should be set inside the scloud cache.
+    if [[ "" == "$(kube.getTenant)" ]]; then
+        echo.error "You must use kube.setTenant to specify the tenant"
+        return 2
+    fi
+
+    # host       : The host value assigned to the event data. Typically, this is
+    #              the hostname of the client from which you are sending data.
+    # source     : The source value to assign to the event data. For example, if
+    #              you are sending data from an app that you are developing, set
+    #              this key to the name of the app.
+    # sourcetype : The sourcetype value assigned to the event data (???)
+    host="${HOST:-$(hostname)}"
+    source=""        # TODO
+    sourcetype=""    # TODO
+
+    format_option=" -format raw"
+    # these are optional, specify the option only if the variable is not-empty.
+    host_option="${host:+ -host ${host}}"
+    source_option="${source:+ -source ${source}}"
+    sourcetype_option="${sourcetype:+ -sourcetype ${sourcetype}}"
+
+    all_ingest_options="${host_option}${source_option}${sourcetype_option}${format_option}"
+
+    echo "executing:"
+    echo "scloud $(_kube.debug_opt) --timeout 600 ingest post-events ${all_ingest_options} < ${filename}"
+
+    # shellcheck disable=SC2046
+    scloud $(_kube.debug_opt) --timeout 600 \
+           ingest post-events "${all_ingest_options}" < "${filename}"
+}
+
+###############################################
+# retrieve logs from all containers in the pod.
+# NOTE: Logs are output to stdout, so the output of this function should 
+#       typically be redirected to a file or unix pipes.
+###############################################
+kube.getPodLogs()
+{
+    local usage
+    usage="USAGE:\n${FUNCNAME[0]} <pod>\n"
+
+    util.assert_argc 1 $# "${FUNCNAME[0]}" "${usage}" || return 2
+
+    kubectl -n $(kube.getNamespace) --all-containers=true logs ${1} 
+}
+
+################################################################################
+################################################################################
+# Non-public implementation functions.
+################################################################################
+################################################################################
+
+###############################################
+# format a "namespace" based on the $USER environment variable
+# and the specified "image-name" parameter.
+# formated as: "imageName-${USER}"
+###############################################
+_kube.makeDeploymentName()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} <image-name>\n" || return 2
+
+    # TODO: test to see if image_name already has ${USER} appended.
+    local image="${1}"
+    local image_name="${image}-${USER}"
+    echo -n "${image_name}"
+}
+
+_kube.validateSearchSync()
+{
+    util.assert_argc 1 $# "${FUNCNAME[0]}" \
+                     "USAGE:\n${FUNCNAME[0]} < async | sync | wait >\n" || return 2
+    [[ "${1}" == "async" ]] || \
+    [[ "${1}" == "sync" ]] || \
+    [[ "${1}" == "wait" ]]
+}
+
+###############################################
+# getSearchsync_option returned result combines :
+#   -wait true|false (wait for results and return)
+#   -sync true|false (wait for results and display)
+# NOTE: both can be false, or exactly one can be true.
+###############################################
+_kube.getSearchSync_option()
+{
+    local sync
+    sync="$(kube.getSearchSync)"
+    if [[ "${sync}" == "async" ]]; then
+         echo "-sync false"
+    elif [[ "${sync}" == "sync" ]]; then
+        echo "-sync true"
+    elif [[ "${sync}" == "wait" ]]; then
+        echo "-sync false"
+    else
+        echo.fatal "value of \"${sync}\" should not be possible here"
+        return 2;
+    fi
+}
+
+_kube.getSearchWait_option()
+{
+    local sync
+    sync="$(kube.getSearchSync)"
+    if [[ "${sync}" == "async" ]]; then
+         echo "-wait false"
+    elif [[ "${sync}" == "sync" ]]; then
+        echo "-wait false"
+    elif [[ "${sync}" == "wait" ]]; then
+        echo "-wait true"
+    else
+        echo.fatal "value of \"${sync}\" should not be possible here"
+        return 2;
+    fi
+}
+
+################################################################################
+################################################################################
+# Debugging related functions (both exposed/public and private/non-public).
+#
+# TODO: Consider modifying/ammending the kube.debugOn and kube.debugOff 
+#       functions to define/redefine functions that include the necessary 
+#       parameters.  E.g. _kube.scloud(), _kube.kubectl(), _kube.sadmin(), etc.
+################################################################################
+################################################################################
+
+kube.debugOn() 
+{
+    # scloud set _debug true
+    export SCLOUD_DEBUG="true"
+}
+
+kube.debugOff()
+{
+    # scloud set _debug false
+    export SCLOUD_DEBUG="false"
+}
+
+# returns "true" or "false" which are linux/unix/macOs executables that will set
+# error appropriately when executed to be used directly as conditionals.
+# e.g.:
+#    if $(kube.getDebug()) ; then ; ... ; fi
+#       [OR]
+#    $(kube.getDebug()) && ...
+kube.getDebug()
+{
+    # scloud config get --key _debug
+    ${SCLOUD_DEBUG:-false}
+}
+
+# if kube.getDebug() returns "true" then return debug options that are common
+# across both kubectl and scloud.
+_kube.debug_opt()
+{
+    # kube.getDebug will return "true" or "false" which is then executed to
+    # evaluate the value.
+    # shellcheck disable=SC2091
+    $(kube.getDebug) && echo "--alsologtostderr"
+}
+
+################################################################################
+################################################################################
+# Set default values in each shell
+# (until I restore functionality to persist these values rather than storing
+# in shell variables)
+# TODO: that ^^^^^^^^
+#
+# NOTE: some things such as the environment, should only be setable via 
+#       kube.login(). It would be an error in semantics and implementation to
+#       allow them to be set outside of a new login.
+################################################################################
+################################################################################
+
+kube.setToDefaults()
+{
+# NOTE: scloud will persist the last set values of username, tenant and env
+    # kube.debugOff
+    kube.setUser jmonschke
+    kube.setSuffix jmonschke
+    kube.setNamespace maestro-developers
+
+    kube.setSearchEarliest "-1h@h"
+    kube.setSearchLatest now
+    kube.setSearchSync sync
+    kube.setSearchQuery "| from main | fields '*'"
+}
+
+# silently returns 0 if the parameter is a valid environment string, or "false"
+# if it is not.
+kube.testValidEnvParam()
+{
+    usage="USAGE:\n${FUNCNAME[0]} [playground | staging | prod]\n"
+    util.assert_argc 1 $# "${FUNCNAME[0]}" "${usage}" || return 2
+
+    [[ "${1:?}" == "playground" ]] || \
+    [[ "${1:?}" == "staging" ]]    || \
+    [[ "${1:?}" == "prod" ]]
+}
+
+kube.getContextFromEnv()
+{
+    #TODO add usage and argument assertion checks.
+    local environment
+    environment="${1:?}"
+    if [[ $environment == playground ]]; then
+        echo "play1.dev.us-west-2.splunk8s.io"
+    elif [[ $environment == staging ]]; then
+        echo "stage1.dev.us-west-2.splunk8s.io"
+    elif [[ $environment == prod ]]; then
+        echo "prod1.dev.us-west-2.splunk8s.io"
+    else
+        echo.error "parameter to kube.getContextFromEnv must be <playground | staging | prod>"
+       return 2
+    fi
+}
+
+###############################################
+# authenticate to OKTA, splunk and kubernetes, retrieve the IAC and Okta tokens
+# and initialize the environment accordingly.
+#
+# NOTE: The environment variables that are set, are exclusive to the shell where
+#       this is executed (and its future children).
+#
+#       However : The tokens that are generated are persisted to "well known" 
+#       files and hence will be shared/common across all shell instances.
+#
+# NOTE: interactions with Kubernetes (e.g. kubectl) require an Okta Token, 
+#       whereas interactions with the splunk APIs in a running deployment
+#       (e.g. scloud / sadmin, etc.) require an IAC Token which requires a 
+#       distinct authentication.
+#
+# TODO: if called with no parameters, present an appropriate dialog for 
+#       selecting from playground, staging or production
+# TODO: Also provide selections for namespace, tenant (, and suffix ?)
+# TODO: After login, show the current set/get values and prompt for any values
+#       that are missing.
+# TODO: Consider which (if any) get/set values that I should make specific to
+#       the specific environment.  Also consider as an alternative if a distinct
+#       named orthogonal group of settings that include an environment setting
+#       may be more appropriate.
+# TODO: consider making more flexible regarding the Okta MFA to support using
+#       "push" as well.
+# TODO: Add error handling / reporting for things like 403 (permission denied)
+#       error codes.
+#
+# INFO : CloudWorks/CO2/CSMS
+#     https://csms.splunk.com/#/
+#
+#     cloudctl config use [dev,stg, prod, local]
+#     cloudctl auth login
+#     cloudctl stacks get <stack_name> > <stack_name>.yaml
+#
+###############################################
+kube.login() 
+{ 
+    local usage environment 
+    usage="USAGE:\n${FUNCNAME[0]} [playground | staging | prod]\n"
+    util.assert_argc_le 1 $# "${FUNCNAME[0]}" "${usage}" || return 2
+
+    if [[ $# -eq 1 ]]; then
+        environment="${1:?}"
+    else
+        select environment in playground dev prod ; do break ; done
+    fi
+
+    # I must be rusty, but I can't seem to get this working, or the IF test 
+    # with '!'
+    # if ( ! $(kube.testValidEnvParam "${environment:?}") ) ; then 
+    #     echo.error "\"${environment}\" invalid, \n" \
+    #                "must be one of \"playground\", \"dev\" or \"prod\"\n" 
+    #     return 2
+    # fi
+    if $(kube.testValidEnvParam "${environment}"); then
+        scloud config set --key env --value "${environment}"
+    else
+        echo.error "\"${environment}\" invalid, \n" \
+                   "must be one of \"playground\", \"dev\" or \"prod\"\n"
+        return 2;
+    fi
+    kubectl config use-context "$(kube.getContextFromEnv $(kube.getEnvironment))"
+    scloud config set --key username --value "${USER:?}"@splunk.com
+    kube.setUser "${USER:?}"
+
+    # tenant is presumed to have already been set via kube.setTenant
+    # scloud config set --key tenant --value "...."
+    # TODO: add functionality to 1) allow specification of the tenant as a 
+    #       parameter, and 2) alow interactive selection of the tenant here
+    #       if it is not already set (if we are able to provide a list of 
+    #       reasonable candidate values for tenant).
+    if [[ "" == "$(kube.getTenant)" ]]; then
+        echo.error "tenant must be set with kube.setTenant before logging in.\n" 
+        return 2;
+    fi
+
+    ############################################################################
+    # NOTE: The variables below are not being specified or altered here but are
+    #       enumerated with the values that will be used by default when they 
+    #       are not explicitly set.
+    # export OKTA_API_HOST="splunkcloud.okta.com"
+    # export OKTA_TOKEN_CLIENT_ID="0oastqarzTYv6iYTw2p6" 
+    # export OKTA_TOKEN_ENDPOINT="https://splunkcloud.okta.com/oauth2/aussub41r37XJ3lI42p6/v1/authorize"
+    # export KUBE_CONFIG="~/.kube/config"
+    ############################################################################
+    export OKTA_MFA_OPTION="${OKTA_MFA_OPTION:-push}"  # [token | push]
+    export OKTA_KUBE_USER="dev@splunk"                 # default value.
+    export OKTA_USERNAME="${OKTA_USERNAME:-${USER}}"
+
+    # NOTE: after successful login, the Okta/kubernetes token needed by kubectl
+    #       is written in ~/.kube/config. 
+    #       This is NOT used by scloud/sadmin/etc which require an IAC token.
+    echo.banner \
+    "Enter your cloud OKTA password and authenticate" 
+    okta-kube-token 
+
+###########################################
+# (Temporary) new flow for getting the IAC token to use for scloud and sadmin 
+# tools.
+# Replace with the new, new flow once it is created.
+###########################################
+    echo.banner \
+    "\n   *** Opening a window in your default browser: ***\n\n" \
+    "1)  Login to splunk cloud in the browser window\n" \
+    "2)  Copy the generated token to the paste buffer\n" \
+    "3)  return to this window and press <enter/return>\n"\
+    "    to retrieve the token from the paste buffer."
+    kube.url_settings
+    util.kbdWait
+    kube.setIacToken "$(pbpaste)"
+
+###########################################
+# Scloud authentication temporarily disabled.
+# for the time being, we need to go the Okta login page to get a token, and 
+# manually set it with kube.setIacToken 
+###########################################
+#    echo " "
+#    echo.banner "Enter your ActiveDirectory password:"
+#
+#    # shellcheck disable=SC2046
+#    scloud $(_kube.debug_opt) login --verbose \
+#           | tee  \
+#           | sed s/Password:// \
+#           | jq -r .access_token >~/.iac_token.txt 
+#
+    kube.settings
+}
+
+fi # end of include guard

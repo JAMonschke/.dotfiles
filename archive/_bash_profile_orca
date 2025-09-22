@@ -1,0 +1,128 @@
+
+#<!-- START ORCA ALIAS -->
+########################################################################################################################
+# This file is not currently referenced because I am not currently using an "Orca" environment.
+########################################################################################################################
+unalias orca 2>/dev/null
+unalias orca_ssh 2>/dev/null
+unalias orca_dev 2>/dev/null
+unalias orca_debug_sh 2>/dev/null
+
+latest_check() {
+        export DOCKER_TLS_VERIFY=
+        export COMPOSE_TLS_VERSION=
+        export DOCKER_CERT_PATH=
+        export DOCKER_HOST=
+        # 1st argument is the repo to compare against, dev or prod
+        repotarget=""
+        shorttarget=""
+        if [ "$1" == "dev" ]; then
+          repotarget="repo.splunk.com/splunk/products/orca/branches/develop"
+          shorttarget="splunk/products/orca/branches/develop"
+        else
+          repotarget="repo.splunk.com/splunk/products/orca"
+          shorttarget="splunk/products/orca "
+        fi
+        fulltarget=$repotarget":latest"
+        LOCAL_SHA=$(docker images --digests | grep "${repotarget}\s" | grep latest | awk -F' ' '{print$3}')
+        REMOTE=$(ping -c 1 -t 3 repo.splunk.com 2>/dev/null)
+        if [[ "$REMOTE" == *"0 packets received"* || "$REMOTE" == *"Unknown host"* || "$REMOTE" == "" ]]; then
+          echo Connection to repo.splunk.com failed! Unable to check 'latest' image version.
+        else
+          command='curl -s "https://repo.splunk.com/artifactory/ui/views/dockerv2" -XPOST -H "Content-Type: application/json;charset=UTF-8" -H "Request-Agent: artifactoryUI" --data-binary '\''{"view":"dockerv2","repoKey":"docker-solutions-local","path":"'$shorttarget"/latest"'"}'\'' | python -c "from __future__ import print_function; import sys, json; print (json.load(sys.stdin)['\''tagInfo'\'']['\''digest'\''])"'
+           REMOTE_SHA=$(eval $command)
+           if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+             while true; do
+               read -p "There is a new version available for ORCA. Would you like to upgrade? [y/n] " yn
+                 case $yn in     
+                   [Yy]* ) docker pull $fulltarget;
+                           if [ $? -eq 0 ]; then
+                                echo "Your local 'latest' ORCA image is up to date!";
+                            else
+                                echo "Error pulling 'latest' ORCA image";
+                            fi
+                     break;;
+                   [Nn]* ) break;;
+                   * ) echo 'Please enter yes or no.';;
+                 esac
+             done
+             while true; do
+               read -p "Do you wish to remove old ORCA images? [y/n] " yn
+                 case $yn in     
+                   [Yy]* ) docker images | grep $repotarget | awk -F' ' '{print$3}' | tail -n+4 | xargs docker rmi -f
+                     echo "All ORCA images except the latest 3 have been removed!";
+                     echo "Kept images:";
+                     docker images | grep $repotarget;
+                     echo;
+                     break;;
+                   [Nn]* ) break;;
+                   * ) echo 'Please enter yes or no.';;
+                 esac
+              done
+           fi
+        fi
+}; 
+
+orca() {
+    latest_check
+    docker run --rm -it -e USER=$USER \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v $HOME/.orca:/root/.orca \
+        -v $HOME/.docker:/root/.docker \
+        -v "$(pwd -P)":/orca-home repo.splunk.com/splunk/products/orca:latest \
+        "$@"
+};
+
+orca_ssh() {
+    latest_check
+    docker run --rm -it -e USER=$USER \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v $HOME/.orca:/root/.orca \
+        -v $HOME/.ssh:/root/.ssh \
+        -v $HOME/.docker:/root/.docker \
+        -v "$(pwd -P)":/orca-home repo.splunk.com/splunk/products/orca:latest \
+        "$@"
+};
+
+orca_dev() {
+    latest_check dev
+    docker run --rm -it -e USER=$USER \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v $HOME/.orca:/root/.orca \
+        -v $HOME/.docker:/root/.docker \
+        -v "$(pwd -P)":/orca-home repo.splunk.com/splunk/products/orca/branches/develop:latest \
+        "$@"
+};
+
+orca_beta() {
+    latest_check 
+    docker run --rm -it -e USER=$USER \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v $HOME/.orca:/root/.orca \
+        -v $HOME/.docker:/root/.docker \
+        -v "$(pwd -P)":/orca-home repo.splunk.com/splunk/products/orca:beta \
+        "$@"
+};
+
+orca_debug_sh() {
+    latest_check
+    docker run --rm -it -e USER=$USER \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v $HOME/.orca:/root/.orca \
+        -v $HOME/.docker:/root/.docker \
+        --entrypoint /bin/sh \
+        -v "$(pwd -P)":/orca-home repo.splunk.com/splunk/products/orca:latest \
+        "$@"
+};
+
+update_orca_alias() {
+    sed -i '' '/#<!-- START ORCA ALIAS -->/,/#<!-- END ORCA ALIAS -->\n/d' ~/.bash_profile
+    curl -s https://repo.splunk.com/artifactory/Solutions/Common/misc/orca.sh >> ~/.bash_profile
+    echo "Please run 'source ~/.bash_profile' or restart your shell."
+};
+
+update_orca_nfr_license() {
+    curl -L -o ~/.orca/nfr_enterprise.lic http://go.splunk.com/splunk-nfr-license
+};
+#<!-- END ORCA ALIAS -->
+

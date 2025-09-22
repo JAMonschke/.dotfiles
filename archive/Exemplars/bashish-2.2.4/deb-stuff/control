@@ -1,0 +1,30 @@
+Source: bashish
+Section: shells
+Priority: extra
+Build-Depends: debhelper (>= 7), autotools-dev
+Maintainer: Thomas Eriksson <arno@users.sourceforge.net>
+Standards-Version: 3.8.3
+Homepage: http://bashish.sourceforge.net
+
+Package: bashish
+Architecture: all
+Depends: ${misc:Depends}, tcsh | csh | c-shell, bash (>= 3.0), rc, fish
+Description: Theme environment for text terminals
+ Bashish is a theme environment for text terminals. It can
+ change colors, font, transparency, and background image
+ on a per-application basis. Additionally Bashish supports
+ prompt changing on common shells such as bash, zsh, and
+ tcsh.
+ .
+ The target audience for Bashish, are users who:
+  * Want a good looking prompt.
+  * Want to customize the appearance of terminal commands.
+  * Want informative titles based on the command arguments.
+  * Need different fonts for different applications - eg.
+    Chinese, Japanese, OEM Terminal fonts.
+ .
+ Compared to writing your own aliases for commands, Bashish
+ supports very complex customization options and does not
+ affect neither aliases/functions nor redirected commands.
+ .
+ web site: http://bashish.sourceforge.net

@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# I think it is trying to set SPLUNK_SOURCE and SPLUNK_HOME and setting up
+# environment variable for executing "splunk".
+BUILD_ROOT="$HOME/builds"
+ 
+set -e
+ 
+fail() {
+    echo "<FAIL> $*" 2>&1
+    exit 1
+}
+ 
+upsearch() {
+    OLD___PWD="${OLD___PWD:-$PWD}"
+    if [[ / == "$PWD" ]]; then
+        cd "$OLD___PWD"
+        unset OLD___PWD
+        return 1
+    fi
+    if [[ -e "$1" ]]; then
+        retval="$PWD"
+        cd "$OLD___PWD"
+        unset OLD___PWD
+        return 0
+    fi
+    cd ..
+    upsearch "$1"
+}
+ 
+unset retval
+upsearch "bin/splunk" || true
+ 
+if [[ "$retval" ]]; then
+    export SPLUNK_HOME="$retval"
+else
+    GITROOT=`git rev-parse --show-toplevel` || fail "Not a git repo?"
+    if [ ! -f "$GITROOT/README-splunk.txt.in" ]; then fail "Can't find README-splunk.txt.in"; fi
+ 
+    BASENAME=`basename "$GITROOT"`
+    export SPLUNK_SOURCE="$GITROOT"
+    export SPLUNK_HOME="$BUILD_ROOT/$BASENAME"
+     
+    if [ ! -d "$SPLUNK_HOME" ]; then
+        mkdir -p "$SPLUNK_HOME"
+    fi
+fi
+ 
+if [ -x "$SPLUNK_HOME/bin/splunk" ]; then
+    eval `"$SPLUNK_HOME/bin/splunk" envvars`
+fi
+ 
+exec "$@"
+

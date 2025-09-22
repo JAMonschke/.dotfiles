@@ -1,0 +1,410 @@
+bashish-2.2.4
+-------------
+_fork() {
+	${1+"$@"}&
+}
+( _fork xmessage woo )
+feat: --default-fontname=""
+feat: --default-bgcolor=""
+feat: --default-fgcolor=""
+feat: --default-cursorcolor=""
+
+feat: _bashish_prompt_shellvars
+CURBACK=C
+CURFWD=A
+CURDWN=E
+CURUP=Q
+FG=3
+BG=4
+BRIGHTFG=9 # non-linux
+BRIGHTFG=1;3 # linux
+BOLD=1
+UNDERLINE
+
+
+bug: svn parsing is way off, sourceforge, eg besm6 have their repo as
+repourl whattodo?
+
+bugfix: dos colors
+
+feat: fix urbandawn and the mvs themes
+feat: ?put engine-files in terminal/init
+feat: ?cleanup /dev/nulls
+bug: c64 themes set TITLESTR permanently
+bug: fix up all other c64 based themes with cursor save, restore
+feat: clock for fire theme
+feat: some modulo for the cbmerror so the range gets 1-255
+
+feat: ?put engine-files in terminal/init -- no was slower. why?
+feat: ?cleanup /dev/nulls
+bug: c64 doesn't work on osx, related to recent c64 fix?
+bug: fail to install on target with spaces
+feat: bashish exec foo -bar -baz
+
+bug: broken & untested on zsh & ksh & sh & dash & csh & tcsh
+support the following shells (at least base support, show bluesteel
+correctly):
+
+bash
+zsh
+dash (posix shell)
+
+bourne shell cannot use variable substitution like ${FOO#*/}
+which sucks
+it could be assumed that no systems only have bourne shell, without keeping
+at least a dash shell handy
+
+
+feat: shellvars: en_US 12-hour time
+
+nice: showcase video on youtube
+
+
+zsh issues
+----------
+bluesteel seems ok? except cwd
+
+ksh issues
+----------
+bug: ksh doesn't support "local" but support local keyword
+     dash doesn't support "local" but support local. FAIL
+bug: ksh stack-smashes (and segfaults) when in the home directory ÜBERFAIL
+bug: ksh cd() stops working when reaching / FAIL
+
+old todo
+--------
+settings:
+--fontname="Bitstream Vera Sans" --fontsize=16 
+fc-list |cut -d: -f1 | sort | uniq
+--color0 --color1 --color15
+--fgcolor
+--bgcolor
+
+shared subproc
+
+CMD/DOS/lsh/wcmd
+----------------
+
+OS == Windows_NT
+wcmd.exe -- wine testing
+
+UTF-8
+IF NOT "%OS%"=="Windows_NT" ECHO This is 95/98/me
+
+IF "%OS%"=="Windows_NT" ECHO This is NT4/2010/XP/2010
+
+IF "%OS%"=="Windows_NT IF "%ProgramFiles%"=="" ECHO This is NT4
+
+IF "%OS%"=="Windows_NT IF NOT "%ProgramFiles%"=="" ECHO This is 2010 or higher
+
+
+Duplicated code:
+
+sh
+
+bashishtheme:
+
+setopts code
+merge unpack for interactive and non-interactive mode?
+
+bashish 2.0.7
+-------------
+
+Low pri:
+
+fix dialog only app only no app, sort
+
+
+scan home dir, if available in global dir, ignore, if not available globally
+add, then add all global themes
+
+install without make
+
+brand theme
+
+
+
+bashish-screen
+--------------
+screen
+PROMPT_COMMAND
+precmd
+cd()
+## update bashish with new tty
+bashish
+
+## bashish-screen
+screen "$@"
+
+.screenrc
+screen 0 bash
+
+etc, can be changed during runtime
+
+
+check for tty file
+
+init STY
+
+tmp -> ipc
+
+........
+
+rc / es
+fn sigwinch { echo foo ;}
+fn cd { builtin cd $@;prompt;}
+
+
+port lsh themes to DOS / cmd.exe - does cmd use UTF-8?
+http://www.lugaru.com/man/DOS.OEM.Character.Set.Support.html
+
+NetBSD wscons
+-------------
+wsfontload -e ibm -N orator -e ibm /usr/share/wscons/fonts/orator.816
+wsfontload -e iso
+
+wsctl
+
+
+ATT U/WIN
+---------
+uses CP437 mode by default on win98
+no \033[6n either
+uname answers UWIN-98, TERM=vt100
+VERSION_ENVIRONMENT=PACKAGE_cc
+
+
+Unxutils.sf.net (zsh)
+---------------------
+does not use cp437 mode by default
+
+fix /dev/vcsa apps in linux console (eg. fte) and always reset colors and
+fonts?
+
+SET PROMPT, dcl in OpenVMS:
+http://h71000.www7.hp.com/DOC/732FINAL/9996/9996pro_062.html
+
+Detect Solaris by uname, SunOS 5.n
+n >10, fail
+
+
+
+wscons in *BSD?
+---------------
+http://www.ussg.iu.edu/hypermail/linux/kernel/9911.1/0916.html
+
+http://netbsd.gw.com/cgi-bin/man-cgi?wsconsctl+8+NetBSD-current
+
+
+legacy compatibility
+--------------------
+ultrix:
+no printf
+FOO[511]=bar
+
+bashish-ssh, bashissh
+---------------------
+provide virtual bashish enviroment by redirecting output to specified tty.
+ssh would be a protected theme command and always wrapped?
+if unthemed, bashish provides ssh transparency
+
+ssh -o NumberOfPasswordPrompts=0 user@host -c true
+
+need to set user and tty in enviroment file
+
+ssh host -c bashish theme $SSH_TTY
+
+konsole
+-------
+yakuake
+KONSOLE_DCOP='DCOPRef(yakuake-8598,konsole)'
+KONSOLE_DCOP_SESSION='DCOPRef(yakuake-8598,session-1)'
+konsole
+
+GreenT. not gnome-terminal compatible
+http://forgeftp.novell.com//greent/homepage/screenshots.html
+
+oascript? tell this window of application Terminal
+iTerm support?
+
+fix subproc messup, shared subproc?
+
+libexec for _bashish_subproc ?
+
+use 'cut' in bluesteel when one cannot use bash string manipulation
+
+run bashish in the overloaded function/alias and make "dumber" shells
+restart if needed.
+
+bashish2.1
+----------
+documentation
+
+tomy retro computer: http://www.floodgap.com/retrobits/tomy/tutti.html
+
+gnome support
+-------------
+Tango naming spec
+
+gconfeditor
+
+import default gnome icon theme at bashish startup and then self destruct
+/desktop/gnome/interface/icon_theme
+
+GICONSIZE=16x16|32x32|scalable
+GICON=apps/gnome-terminal
+
+zenity dialog frontend
+
+kdialog frontend
+
+
+CMD/DOS support
+---------------
+note, when running on cygwin in a 'console' (ie non-xterm) tty is set to
+/dev/conin i'm not sure if this is usable in the bashish point of view,
+perhaps one could open a fifo and tail from that? - ie: broken system
+workaround
+
+cmd colors!: 
+http://www.ss64.com/nt/color.html
+
+      COLOR [background][foreground]
+
+Colour attributes are specified by 2 of the following hex digits. Each digit
+can be any of the following values: 
+
+0 = Black
+8 = Gray
+
+1 = Blue
+9 = Light Blue
+
+2 = Green
+A = Light Green
+
+3 = Aqua
+B = Light Aqua
+
+4 = Red
+C = Light Red
+
+5 = Purple
+D = Light Purple
+
+6 = Yellow
+E = Light Yellow
+
+7 = White
+F = Bright White 
+
+
+
+Plan9 support
+-------------
+http://cm.bell-labs.com/sources/plan9/sys/src/ape/cmd/README
+make an rc wrapper
+
+
+SGI support (before they go bankrupt?)
+--------------------------------------
+implement xwsh support
+
+MacOSX support
+--------------
+cocoadialog frontend
+
+?CDE integration
+---------------
+detect bit depth
+if 1 bit use bm
+>1 use pm
+
+use icons
+
+from http://docs.hp.com/en/B1171-90148/ch13s03.html
+
+"CDE is a visually rich environment"
+
+uhm, yeah, right! :)
+
+"CDE accommodates three display resolutions: low resolution (640x480 pixels),
+medium resolution (800x600 pixels), and high resolution (mega-pixel). The
+size of the Front Panel and some of the icons change automatically,
+depending on the display resolution. For this reason, your application must
+provide different icon sizes."
+
+## s(mall) seems to be volontary
+DTICONTYPE=.pm
+DTICONTYPE=.bm
+DTICONSIZE=t|m|l
+DTICON=foobar
+search in /usr/dt/appconfig/C/icons/
+XMICONSEARCHPATH
+
+VT320 support
+-------------
+soft fonts :) requires some locking so programs and terminal configuration
+do not run in paralell
+
+memory efficiency
+-----------------
+Bashish is a bit hungry on memory, this requires some
+complex changes to fix.
+
+_bashish_subproc_${tty}
+
+still separate fifos
+
+shared subprocess
+cat to each tty? yes
+
+NATIVE_STATE
+BTAPP[0]
+
+_bashish_tty_[tty]
+{
+	local STATE_LIST
+}
+reload all functions?
+how to handle reload? theme changes?
+>&-
+does not inherit changed functions! kill and restart all running functions 
+at the same time, check if tty exists and is writeable! test -w /dev/pts/3
+
+vt100 term
+----------
+???ansi colors
+???invert: printf "\033[?5l|h"
+title
+
+bashish bash/zsh optimization (?)
+---------------------------------
+the wrapper can be replaced by a function in the bash shell, thereby
+removing the need to start a shell
+
+this might also be needed on some systems which does not like the funky
+multiple fd-code
+
+## bash speed optimization
+eval alias $BTAPP=\"BTAPP=$BTAPP _bashish_theme\"
+## zsh preexec speedup
+
+preexec ()
+{
+
+BTAPP=$1
+$2 $3 ... $n
+}
+
+Terminal.app
+------------
+AppleScript for Terminal.app in Mac OS X
+
+remove imagelogo code once executed
+
+sleep ?
+prompt handles startup logo
+
+future...
+
