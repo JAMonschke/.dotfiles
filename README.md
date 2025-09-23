@@ -12,5 +12,5 @@ To setup on a new machine:
   * cd "${HOME}"
   * git clone ssh://git@github.com/JAMonschke/.dotfiles.git .
   * cd .dotfiles
-  * ./install.sh
+  * ./install_dotfiles.sh
 

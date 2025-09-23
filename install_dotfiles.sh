@@ -25,11 +25,11 @@
 #
 # TODO: Add a --backup option create a <backup.zip> file to selectiely archive
 #       the individual files reflecting the current state (limited to those
-#       files that would be affected by running install.sh with no options.
+#       files that would be affected by running install_dotfiles.sh with no options.
 
 # TODO: Add an "--export_functions" option to export (output) the function
 #       definitions so that they can be incorporated into an environment with
-#       `$(eval ${HOME}/.dotfiles/install.sh --export_functions)`, without
+#       `$(eval ${HOME}/.dotfiles/install_dotfiles.sh --export_functions)`, without
 #       executing any of the logic in this file. (i.e. for testing/debugging
 #       these tools, or so that these tools can be used interactively, either
 #       for installation of these scripts/configs, or for installation of other
@@ -40,7 +40,7 @@
 # TODO: Consider whether we need to implement additional logic to manage
 #       ownership and permissions of the installation.
 #
-# TODO: If I implement parameters for this install.sh script, then add a
+# TODO: If I implement parameters for this install_dotfiles.sh script, then add a
 #       -h/--help parameter to explain the usage of each parameter.
 #
 # TODO: Consider if we should source some of our bash.* files to use within
@@ -182,7 +182,30 @@ finalize_uninstall()
 ################################################################################
 
 ###########################################
-# move_targets_to_backup()
+###########################################
+make_directory()
+{
+  for new_directory; do
+      if [[ ! -d "${new_directory}" ]] ; then
+        if $(mkdir --parents "${new_directory}"); then
+          printf "created directory \"%s\".\n" "${new_directory}"
+          # NOTE: Currently not creating uninstall logic for directories created.
+          #       1) Very low priority to cleanup the backup directory after it
+          #          has been used to uninstall; and
+          #       2) Directories created outside the backup directory will
+          #          frequently gain additional files and directories, other
+          #          than the ones that we create.
+        else
+          printf "ERROR: Failed to mkdir --parents \"%s\".\n" "${backup_dir}"
+          abort
+        fi
+      fi
+  done
+}
+
+
+###########################################
+# move_to_backup()
 #
 # NOTE: We must allow for backing up many potential targets, to reflect that
 #       each application may allow for configuration files to exist in many
@@ -203,9 +226,9 @@ finalize_uninstall()
 # existing file/dir then this function will return successfully with no action
 # taken.
 #
-# move_targets_to_backup [target_path_1] [target_path_2]...
+# move_to_backup [target_path_1] [target_path_2]...
 ###########################################
-move_targets_to_backup()
+move_to_backup()
 {
    # NOTES:
    # 1) each target_path value will be quoted by the expansion "$@", so double
@@ -219,64 +242,46 @@ move_targets_to_backup()
    #    will return "." (not empty string) if the <absolute file path> resolves
    #    to ${HOME}.
 
-    local target_dir
-    local target_name
-    local target_path
-    local relative_target_dir
+    local source_dir
+    local source_name
+    local source_path
+    local relative_source_dir
     local backup_file_dir
     local backup_file_path
 
-    for target_path in "$@"; do
+    for source_path; do
         # if the target exists (whether it is a file, link or directory) then
         # move that target to the backup directory.
-        if [[ -e "${target_path}" ]]; then
+        if [[ -e "${source_path}" ]]; then
             # shellcheck disable=SC2086
-            target_dir="$(dirname ${target_path})"
+            source_dir="$(dirname ${source_path})"
 
             # shellcheck disable=SC2086
-            target_name="$(basename ${target_path})"
+            source_name="$(basename ${source_path})"
 
-            relative_target_dir="$(realpath --no-symlinks --relative-to="${HOME}"\
-              "${target_dir}" )"
+            relative_source_dir="$(realpath --no-symlinks \
+                                 --relative-to="${HOME}" "${source_dir}" )"
 
-            backup_file_dir="${backup_dir}/${relative_target_dir}"
-            backup_file_path="${backup_file_dir}/${target_name}"
+            backup_file_dir="${backup_dir}/${relative_source_dir}"
+            backup_file_path="${backup_file_dir}/${source_name}"
 
-            # make the subdirectory (under the backup directory) if it does not
-            # already exist.
-            if [[ ! -d "${backup_file_dir}" ]] ; then
-                if $(mkdir --parents "${backup_file_dir}"); then
-                  echo "created directory \"${backup_file_dir}\"."
-                  # NOTE: Currently no undo for the directories made under the
-                  #       backup directory.
-                  # TODO: [low priority] add logic to cleanup the created backup
-                  #      directory by adding commands to add_undo_command. Will
-                  #      require that we manually traverse the directory tree
-                  #      when creating directories (rather than using the
-                  #      --parents option) in order to build the corresponding
-                  #      list of single (empty) directory `rm` or `rmdir`
-                  #      commands.
-                  # NOTE: would `rm --dir` be an option here?
-                  #       (--dir: remove empty directories)
-                else
-                  echo "ERROR: Failed to mkdir --parents ${backup_dir}."
-                  abort
-                fi
-            fi
+            make_directory "${backup_file_dir}"
 
             # move the file/directory/soft-link to the backup directory.
-            if $(mv --no-clobber "${target_path}" "${backup_file_path}"); then
-              add_undo_command "\$(mv --no-clobber \"${backup_file_path}\" \"${target_path}\")"
-              echo "moved \"${backup_file_path}\" to"
-              echo "      \"${target_path}\"."
+            if $(mv --no-clobber "${source_path}" "${backup_file_path}"); then
+                add_undo_command "\$(mv --no-clobber \"${backup_file_path}\" \"${source_path}\")"
+                printf "moved \"%s\" to \"%s\"\n" "${source_path}" "${backup_file_path}"
             else
-              echo "ERROR: could not move \"${target_path}\" to "
-              echo "       \"${backup_file_path}\""
-              abort
+                printf "ERROR: could not move \"%s\" to \"%s\"\n" \
+                       "${source_path}" "${backup_file_path}"
+                abort
             fi
+        else
+           printf "no existing file \"%s\", no need to backup.\n" \
+                  "${source_path}"
         fi
 
-  done #for loop
+    done #for loop
 }
 
 
@@ -289,6 +294,7 @@ install_link()
 {
     local source_file_path
     local target_path
+    local target_dir
 
     if [[ ${#} -ne 2 ]]; then
         echo "ERROR: \"${0}\" takes exactly 2 arguments."
@@ -312,20 +318,15 @@ install_link()
     fi
 
     target_dir="$(dirname ${target_path})"
-    if [[ ! -d "${target_path}" ]]; then
-      # shellcheck disable=SC2086   #convert to quoted string.
-      mkdir --parents "${target_dir}"
-      # we intentionally are not removing directories created during the install
-      # in case the user has added additional files within the directory or
-      # directory path that we are creating here.
-    fi
+    make_directory "${target_dir}"
 
     if $(ln -s "${source_file_path}" "${target_path}"); then
-        echo "link made: \"${target_path}\" ==> \"${source_file_path}\""
+        printf "link made: \"%s\" ==> \"%s\"\n" \
+               "${source_file_path}" "${target_path}"
         add_undo_command "\$(rm \"${target_path}\")"
     else
-        echo "ERROR : COULD NOT MAKE LINK: \"${target_path}\" ==>" \
-             " \"${source_file_path}\""
+      printf "ERROR: Could not make link: \"%s\" ==> \"%s\"\n" \
+        "${source_file_path}" "${target_path}"
         abort
     fi
 }
@@ -340,16 +341,21 @@ installation_precheck()
 {
   echo "${FUNCNAME}" "$*"
   if [[ -d "${backup_dir}" ]]; then
-    echo "ERROR: \"${backup_dir}\" exists. "
-    echo "       Directory must be renamed or removed before executing this script."
-    echo "       Nothing to undo / uninstall."
+    printf "ERROR: \"%s\" exists.\n" "${backup_dir}"
+    printf "       Directory must be renamed or removed before executing this script.\n"
+    printf "       Nothing to undo / uninstall. \n"
     exit 1
+  fi
+
+  if [[ ! -d "${DOTFILES_DIR}" ]]; then
+    printf("ERRROR: Missing \"%s\"\n" "${DOTFILES_DIR}"
+    exit 2;
   fi
 
   # ensure that sources for XDG_CONFIG_HOME are present.
   if [[ ! -d ${config_source} ]]; then
-    echo "ERROR: Missing \"${config_source}\" directory"
-    echo "       Nothing to undo / uninstall."
+    printf "ERROR: Missing \"%s\" directory\n" "${config_source}"
+    printf "       Nothing to undo / uninstall.\n"
     exit 3
   fi
 }
@@ -361,7 +367,7 @@ installation_precheck()
 ###############################################################################
 
 ###############################################################################
-# initialize the install.sh local variables used by the functions defined above
+# initialize the install_dotfiles.sh local variables used by the functions defined above
 # and by the logic below.
 ###############################################################################
 dotfiles_dir="${DOTFILES_DIR:-${HOME}/.dotfiles}"
@@ -373,41 +379,34 @@ pending_uninstall_script="${backup_dir}/reversed_uninstall.sh"
 ###############################################################################
 # pre-installation checks.
 ###############################################################################
-installation_precheck
+if ! installation_precheck; then
+  exit
+fi
 
 ###############################################################################
 # Now we start mucking with things...
-# We will start with the backup directory and initializing the $uninstall_script
-# script file.
 ###############################################################################
 
-# installation_precheck should guarantee that ${backup_dir} does not currently
-# exist.
-if $(mkdir --parents "${backup_dir}"); then
-  echo "Created directory \"${backup_dir}\""
-else
-  echo "Failed to mkdir --parents ${backup_dir}."
-  echo "Nothing to undo / uninstall."
-  exit 2
-fi
+make_directory "${backup_dir}" || exit
 
-
-
+###############################################################################
 # NOTE: from this point on, we must only abort execution (due to an error) by
 #       calling `abort` and never by calling `exit` or `return`.
+###############################################################################
+
 ###############################################################################
 # We will start with the core ${HOME}.bash* files.
 ###############################################################################
 
-move_targets_to_backup "${HOME}/.bashrc"
+move_to_backup "${HOME}/.bashrc"
 install_link "${dotfiles_dir}/bashrc" "${HOME}/.bashrc"
 
-move_targets_to_backup "${HOME}/.bash_profile" \
+move_to_backup "${HOME}/.bash_profile" \
                        "${HOME}/.profile" \
                        "${HOME}/.bash_login"
 install_link "${dotfiles_dir}/bash_profile" "${HOME}/.bash_profile"
 
-move_targets_to_backup "${HOME}/.bash_logout"
+move_to_backup "${HOME}/.bash_logout"
 install_link "${dotfiles_dir}/bash_logout" "${HOME}/.bash_logout"
 
 ################################################################################
@@ -444,46 +443,36 @@ if [[ ! -v XDG_CONFIG_HOME ]]; then
   XDG_CONFIG_HOME="${HOME}/.config"
 fi
 
-# if the directory ${XDG_CONFIG_HOME} does not exist, then create it.
-if [[ ! -d ${XDG_CONFIG_HOME} ]]; then
-  if mkdir --parents "${XDG_CONFIG_HOME}"; then
-    # DO NOT use -f option, so that the .config directory will only succeed if
-    # the config directory is empty after we have removed the links that we
-    # installed there. I.e. abort if any other files were added to ~/.config.
-    add_undo_command "\$(rmdir --ignore-fail-on-empty \"${XDG_CONFIG_HOME}\" 2>/dev/null; true)"
-  else
-    echo "ERROR: could note create \"${XDG_CONFIG_HOME}\"."
-    abort
-  fi
-fi
+make_directory "${XDG_CONFIG_HOME}"
 
 # ccache.conf
-move_targets_to_backup "${XDG_CONFIG_HOME}/ccache/ccache.conf" \
-                       "${HOME}/.config/ccache/ccache.conf" \
-                       "${HOME}/.ccache/ccache.conf"
-install_link   "${config_source}/ccache.conf" \
-               "${XDG_CONFIG_HOME}/ccache/ccache.conf"
+move_to_backup "${XDG_CONFIG_HOME}/ccache/ccache.conf" \
+               "${HOME}/.config/ccache/ccache.conf" \
+               "${HOME}/.ccache/ccache.conf"
+install_link "${config_source}/ccache.conf" \
+             "${XDG_CONFIG_HOME}/ccache/ccache.conf"
 
 # clang-tidy (does not currently support XDG_CONFIG_HOME)
-move_targets_to_backup "${XDG_CONFIG_HOME}/.clang-tidy" \
-                       "${HOME}/.clang-tidy"
+move_to_backup "${XDG_CONFIG_HOME}/.clang-tidy" \
+               "${HOME}/.clang-tidy"
 install_link "${config_source}/clang-tidy" "${HOME}/.clang-tidy"
 
 # dircolors
-move_targets_to_backup "${XDG_CONFIG_HOME}/dircolors" \
-                       "${HOME}/.dircolors"
+move_to_backup "${XDG_CONFIG_HOME}/dircolors" \
+               "${HOME}/.dircolors"
 # NOTE: .dircolors is only used by Linux, and is NOT used by Darwin/MacOS
 if [[ "$(uname)" == "Linux" ]]; then
   install_link "${config_source}/dircolors" "${XDG_CONFIG_HOME}/dircolors"
 fi
 
 # gitconfig
-move_targets_to_backup "${XDG_CONFIG_HOME}/.gitconfig" \
-                       "${HOME}/.gitconfig"
+move_to_backup "${XDG_CONFIG_HOME}/.gitconfig" \
+               "${XDG_CONFIG_HOME}/git/config" \
+               "${HOME}/.gitconfig"
 install_link "${config_source}/gitconfig" "${XDG_CONFIG_HOME}/git/config"
 
 # inputrc  (BASH does not use ${XDG_CONFIG_HOME}
-move_targets_to_backup "${HOME}/.inputrc"
+move_to_backup "${HOME}/.inputrc"
 install_link "${config_source}/inputrc" "${HOME}/.inputrc"
 
 # vimrc
@@ -492,8 +481,8 @@ install_link "${config_source}/inputrc" "${HOME}/.inputrc"
 #       pointing to the same file) to support other variants?
 #
 # ~/.vim directory for vim?
-move_targets_to_backup "${HOME}/.vimrc"\
-                       "${XDG_CONFIG_HOME}/nvim/init.nvim"
+move_to_backup "${HOME}/.vimrc"\
+               "${XDG_CONFIG_HOME}/nvim/init.nvim"
 
 # The vimrc file is used as the config file for both/either `vim` and `nvim`.
 # `nvim` uses XDG_CONFIG_HOME, but `vim` does not (uses ${HOME})
@@ -507,9 +496,8 @@ finalize_uninstall
 
 echo "*************************************************************************"
 echo "Success (apparently). When you are satisfied with the correctness of the"
-echo "installation, you may remove the directory \"${backup_dir}\" if you wish,"
-echo "or save it so that the environment can be restored to its state prior to"
-echo "running \"${0}\" in the future."
+echo "installation, you may remove the directory \"${backup_dir}\" or save it"
+echo "so that the environment can be restored to its initial state."
 echo "*************************************************************************"
 
 true; # return status success.
