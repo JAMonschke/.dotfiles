@@ -1,7 +1,7 @@
 # can't follow non-constant source error
 # shellcheck disable=SC1090
 
-# variables referenced but notassigned
+# variables referenced but not assigned
 # shellcheck disable=SC2154
 
 # include guard
@@ -166,35 +166,14 @@ echo.banner()
    echo -en "${_fg[dflt]}"
 }
 
-###############################################
-# echoes all parameters and prompts for confirmation.  
-# returns "true" if they confirm, or "false" if they do not.
-###############################################
-util.confirm()
-{
-    [[ ${#} -eq 0 ]] && echo "${*}"
-    read -rp "CONTINUE?: [\"${_attr[bold]}YES${_attr[bold_off]}\"]" confirmation
-    if [[ "${confirmation}" != "YES" ]]; then
-        echo "ABORTING"
-        return 1;
-    fi
-}
 
-util.kbdWait()
-{
-    # NOTE: spamalot is a dummy variable who value is not intended for use.
-    # SC2034: spamalot appears unused. Verify use (or export if used externally).
-    # shellcheck disable=SC2034
-    read -r spamalot
-}
-
-############################################################
-############################################################
+################################################################################
+################################################################################
 # functions for managing use of "source" for files.
 # and optimizing to ensure against recursion and redundant (unnecessary)
 # includes / sourcing.
-############################################################
-############################################################
+################################################################################
+################################################################################
 
 ###########################################
 # will attempt to "source" a filename parameter and set the status to indicate
@@ -286,6 +265,28 @@ source.requested()
 # I.e. see if "i" (interactive) is in the list of options for the shell.
 ###############################################
 util.is_interactive() { [[ $- == *i* ]]; }
+
+###############################################
+# echoes all parameters and prompts for confirmation.
+# returns "true" if they confirm, or "false" if they do not.
+###############################################
+util.confirm()
+{
+    [[ ${#} -eq 0 ]] && echo "${*}"
+    read -rp "CONTINUE?: [\"${_attr[bold]}YES${_attr[bold_off]}\"]" confirmation
+    if [[ "${confirmation}" != "YES" ]]; then
+        echo "ABORTING"
+        return 1;
+    fi
+}
+
+util.kbdWait()
+{
+    # NOTE: spamalot is a dummy variable who value is not intended for use.
+    # SC2034: spamalot appears unused. Verify use (or export if used externally).
+    # shellcheck disable=SC2034
+    read -r spamalot
+}
 
 ###############################################
 ###############################################

@@ -348,7 +348,7 @@ installation_precheck()
   fi
 
   if [[ ! -d "${DOTFILES_DIR}" ]]; then
-    printf("ERRROR: Missing \"%s\"\n" "${DOTFILES_DIR}"
+    printf "ERRROR: Missing \"%s\"\n" "${DOTFILES_DIR}"
     exit 2;
   fi
 

@@ -28,6 +28,11 @@ alias   cd....='cd ../../../'
 alias   cd.....='cd ../../../../'
 alias   cd......='cd ../../../../../'
 
+
+################################################################################
+# add selected options to commands with aliases
+################################################################################
+
 # add discriminator characters and colorize the output if possible. 
 if [[ $( command ls --classify --color=auto /dev/null 2>/dev/null ) ]] ; then
    # this should work for Linux
@@ -59,10 +64,10 @@ alias fgrep="fgrep --color=auto"
 
 alias ripgrep="rg"
 
-# use "bat" instead of "cat" if it is installed.
 # NOTE: bat fails if aliased to cat because it detects a recursion.
 #       I presume that implies that bat is using cat "behind the scenes".
 # [[ $( command which bat 2>/dev/null ) ]] && alias cat="bat"
+
 
 #[[ $( command which gmake 2>/dev/null ) ]] && alias make="gmake"
 

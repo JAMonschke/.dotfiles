@@ -102,6 +102,7 @@ fi
 ###########################################
 source.optional "/usr/local/etc/profile.d/bash_completion.sh" #Darwin only.
 source.dir      "/etc/bash_completion.d"
+source.dir      "/home/linuxbrew/.linuxbrew/etc/bash_completion.d"
 # This should also include bash completions@2 if installed via brew on Linux.
 source.dir      "/home/linuxbrew/.linuxbrew/etc/profile.d"
 

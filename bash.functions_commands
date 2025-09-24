@@ -540,18 +540,33 @@ show.class_methods()
 }
 
 
+
 ################################################################################
 ################################################################################
 # man.* functions    (Currently, Darwin/macOS ONLY)
+# TODO: rename to help. (or something else more neutral)
 # TODO: add new functions (for both environments)
-#       man.bash() # use bash.help
-#       man.man()  # man pages (with logic to deal with sections `man #`
 #       man.info() # Gnu `info` pages
-#       man.help() # to search all available man.*() functions for information.
+#       man.yelp() # Ubuntu Desktop application manual browsing.
+#       man.help() # aggregate from available sources.
+#
+# NOTE: My Ubuntu has
+#      1: /usr/bin/xman     (but it doesn't seem very useful. )
+#      2: /usr/bin/xdg-open (but not equivalent to Darwin's `open`.)
+#      3: /usr/bin/pdfopen and pdfclose
+#      4: /usr/bin/mimeopen  (Perl script)
+#         This script tries to determine the mimetype of a file and open it with
+#         the default desktop application. If no default application is
+#         configured the user is prompted with an "open with" menu in the
+#         terminal.
+#
+#         To use this script you need the freedesktop mime-info database and the
+#         freedesktop desktop-file-utils package.
+#         See File::MimeInfo::Applications(3) for more details.
 ################################################################################
 ################################################################################
 if [[ "${UNAME}" == "Darwin" ]] ; then
-    man.() { bash.show_functions 'man\.' ; }
+
     # SC2145: Argument mixes string and array. Use * or separate argument.
     # shellcheck disable=SC2145
     man.x() { open x-man-page://"${@}"; }
@@ -562,6 +577,41 @@ if [[ "${UNAME}" == "Darwin" ]] ; then
     man.docset() { open dash://"${1}:{${@}}"; }
 fi
 
+#########################
+# Ubuntu/Gnome application help and documentation.
+#########################
+if [[ -x /usr/bin/yelp ]]; then
+    man.yelp() { /usr/bin/yelp "$@"; }
+fi
+
+#########################
+# Colorized man output
+# from: https://github.com/2KAbhishek/dots2k/blob/main/config/shell/functions.sh
+#########################
+man.man()
+{
+    env \
+        GROFF_NO_SGR="true" \
+        LESS_TERMCAP_mb="$(printf "\e[1;31m")" \
+        LESS_TERMCAP_md="$(printf "\e[1;36m")" \
+        LESS_TERMCAP_me="$(printf "\e[0m")" \
+        LESS_TERMCAP_se="$(printf "\e[0m")" \
+        LESS_TERMCAP_so="$(printf "\e[1;44;33m")" \
+        LESS_TERMCAP_ue="$(printf "\e[0m")" \
+        LESS_TERMCAP_us="$(printf "\e[1;32m")" \
+        PAGER="${commands[less]:-$PAGER}" \
+        _NROFF_U=1 \
+        PATH="$HOME/bin:$PATH" \
+        man "$@"
+}
+
+if [[ -x /usr/bin/info ]]; then
+    man.info() { /usr/bin/info "$@"; }
+fi
+
+man.bash() { help "$@"; }
+
+man.() { bash.show_functions 'man\.' ; }
 
 ################################################################################
 ################################################################################
@@ -640,4 +690,4 @@ find.inSource()
        "${1:?}" .
 }
 
-fi # end of include guard
+fi   # end of include guard

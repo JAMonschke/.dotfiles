@@ -15,6 +15,9 @@
 #       Beyond Compare related settings/options for the Linux environment
 #       -- try to determine the Linux/Darwin environment from within this
 #          file in order to support maintaining both configurations.
+#
+# TODO: Since these files are public now, consider supporting a fallback diff
+#       and merge tool since "Beyond Compare" is commercial.
 ###################################
 
 
@@ -22,10 +25,15 @@
 	name = James Monschke
 	email = gcty2p8unv@snkmail.com
 
+#[github]
+#    user = JAMonschke
+#    token = ???
+
 [branch]
     ### this was set in cpride's file.  I want to understand what it is doing
     ### before setting it.
     # autosetuprebase = always
+
 [pack]
     ### these are set in cpride's file.  I want to understand what it is doing
     ### before setting them.
@@ -36,6 +44,16 @@
     # window = 10
     # deltaCacheLimit = 10000
     # threads = 28
+
+[gui]
+    editor = gedit
+
+[web]
+    browser = firefox
+
+[init]
+    defaultBranch = main
+
 [core]
     askpass = ""
     abbrev = 12
@@ -48,59 +66,80 @@
     ### spaces, and all kinds of trailing whitespace as an error.
     whitespace = space-before-tab,indent-with-non-tab,trailing-space
 
-    ### available tools vary from my mac and the dev-cluster; these values are 
+    ### available tools vary from environment to environment; these values are 
     ### conservative fallback values that will be over-ridden by the environment
     ### variables GIT_EDITOR and GIT_PAGER set in my bash.functions_git file.
     pager = less -x4
-    editor = vim
-[diff]
-	tool = bc3
-[merge]
-    ### Include summaries of merged commits 
-    #### in newly created merge commit messages
-    log = true
-	tool = bc3
-[difftool "bc3"]
-    trustExitCode = true
-[mergetool "bc3"]
-    cmd = bc3 "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
-	trustExitCode = true
-    ### To remove unwanted .orig files
-    keepBackup = false
+    editor = nvim
+
 [push]
     default = simple
 	autoSetupRemote = true
     # TODO: seen in other config files. investigate...
     # default = current
+
 [pull]
 	rebase = false
     # TODO: seen in other config files. investigate...
     # default = current
+
+##############################################################
+##############################################################
+# configure tools
+##############################################################
+############################################################## 
+[diff]
+	tool = bc3
+
+[merge]
+    ### Include summaries of merged commits 
+    #### in newly created merge commit messages
+    log = true
+	tool = bc3
+
+[difftool "bc3"]
+    trustExitCode = true
+
+[mergetool "bc3"]
+    cmd = bc3 "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
+	trustExitCode = true
+    ### To remove unwanted .orig files
+    keepBackup = false
+
+##############################################################
+##############################################################
+# make it colorful 
+##############################################################
+##############################################################
 [color]
     ui = auto
     branch = auto
     diff = auto
     status = auto
+
 [color "branch"]
     current = yellow reverse
     local = yellow
     remote = green
+
 [color "diff"]
     meta = yellow bold
     frag = magenta bold
     old = red bold
     new = green bold
+
 [color "status"]
     added = yellow
     changed = green
     untracked = cyan
-[alias]
+    #untracked = red
 
-    ##############################################################
-    ##############################################################
-    # aliases (from Splunk)
-    ##############################################################
-    ##############################################################
+##############################################################
+##############################################################
+# aliases 
+##############################################################
+##############################################################
+[alias]
 
     ##############
     # Get the current branch name (not so useful in itself, but used in
@@ -161,9 +200,7 @@
      }; f"
 
     ##############################################################
-    ##############################################################
     # <jmonschke local aliases>
-    ##############################################################
     ##############################################################
     bash-env = "!f() { env | sort ; };f"
 
@@ -175,14 +212,16 @@
 
     update = remote update
 
+###############################################################################
 #   TODO: revise Beyond Compare entries for linux environment and make 
 #   adaptable between Linux and Darwin
-
+#
 #   bc-diff = difftool --dir-diff --no-symlinks
 #   bcomp   = difftool --dir-diff --no-symlinks
-    bc-diff = difftool --dir-diff 
-    bcomp   = difftool --dir-diff
-    file-diff = difftool --no-prompt
+#   bc-diff = difftool --dir-diff 
+#   bcomp   = difftool --dir-diff
+#   file-diff = difftool --no-prompt
+###############################################################################
 
     type = cat-file -t
 
@@ -197,8 +236,8 @@
 ######################
 ### Aliases for URL's
 ######################
-#[url "ssh://git@cd.splunkdev.com"]
-#    insteadOf = bb:
+[url "https://github.com/"]
+     insteadOf = gh:
 
 [cola]
 	spellcheck = false

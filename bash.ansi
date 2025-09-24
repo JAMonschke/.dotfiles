@@ -82,11 +82,13 @@ if unset _char _cmnd _crsr _attr _fg _bg _utf8 2>/dev/null; then
     #          (or use "hexdump -b" to get octal codes)
     #       -- since bash 4.2 \uHHHH can be used in $'...' strings.
     #          E.g. PS1=$'some text \u253f more text'
+    #
+    # "➊ ➋ ➌ ➍ ✓ ✔ ✘ ✗ ☎ ⇒ ⌛"
     #######################################
 
     if [[ ${LANG} == *UTF-8 ]]; then  # substring matching on UTF-8
-             _utf8[fancyX]="✗"  # $'\0342\0234\0227'
-          _utf8[checkmark]="✓"  # $'\0342\0234\0223'
+             _utf8[fancyX]="✘"  # $'\0342\0234\0227'
+          _utf8[checkmark]="✔"  # $'\0342\0234\0223'
      _utf8[triangle_right]="‣"  # $'\0342\0200\0243'
              _utf8[circle]="•"  # $'\0342\0200\0242'
              #NOTE: glyphs below occupy two character positions
@@ -98,6 +100,17 @@ if unset _char _cmnd _crsr _attr _fg _bg _utf8 2>/dev/null; then
       _utf8[right_bracket]="】" # $'\0343\0200\0221'
                _utf8[pray]="🙏" # $'\0360\0237\0231\0217'
             _utf8[namaste]="${_utf8[pray]}"
+              _utf8[phone]="☎"
+         _utf8[hour_class]="⌛"
+        _utf8[right_arrow]="⇒"
+                 _utf8[Rx]="℞"
+            _utf8[celcius]="℃"
+         _utf8[fahrenheit]="℉"
+             _utf8[kelvin]="K"
+           _utf8[circle_1]="➊"
+           _utf8[circle_2]="➋"
+           _utf8[circle_3]="➌"
+           _utf8[circle_4]="➍"
     else  # provide text alternates when UTF-8 is unavailable
              _utf8[fancyX]="<X>"
           _utf8[checkmark]="<checkmark>"
@@ -111,6 +124,17 @@ if unset _char _cmnd _crsr _attr _fg _bg _utf8 2>/dev/null; then
       _utf8[right_bracket]="]"
                _utf8[pray]="<pray>"
             _utf8[namaste]="<namaste>"
+              _utf8[phone]="<phone>"
+         _utf8[hour_glass]="<hour glass>"
+        _utf8[right_arrow]="<right arrow>"
+                 _utf8[Rx]="<prescription>"
+            _utf8[celcius]="<Celsius>"
+         _utf8[fahrenheit]="<Fahrenheit>"
+             _utf8[kelvin]="<Kelvin>"
+           _utf8[circle_1]="<1>"
+           _utf8[circle_2]="<2>"
+           _utf8[circle_3]="<3>"
+           _utf8[circle_4]="<4>"
     fi
 
     #######################################
@@ -314,6 +338,7 @@ fi  # end of initialization of Ansi escape and character constants.
 
 ansi.() { bash.show_functions 'ansi\.' ; }
 
+
 #######################################
 # function to display all available colors on 256 color ANSI terminals.
 # stolen from:
@@ -417,9 +442,57 @@ ansi.getCursorPos()
 }
 
 
+
+
+
+################################################################################
+################################################################################
+# These 2 functions ansi.color_text and ansi.color_escape() are stolen/bowered from:
+# https://github.com/2KAbhishek/dots2k/blob/main/config/shell/functions.sh
+################################################################################
+################################################################################
+
 #######################################
-# TODO: Ansi keyboard shortcut sequences
-# Esc[Code;String;...p 
+# show colored text
 #######################################
+ansi.color_text() {
+    for code in {000..255}; do
+        printf "%s: \033[38;5;%smThis is how your text would look like\033[0m\n" "$code" "$code"
+    done
+}
+
+#######################################
+# show colors and codes
+# NOTE: This function is moved to last in the file because the assignment to
+#       seq0 below confuses many tools (including CLion and BashSupportPro) that
+#       try to parse it even though Bash accepts it without issue.
+#######################################
+ansi.color_escape() {
+    local fgc bgc vals seq0
+
+    printf "Color escapes are %s\n" '\e[${value};...;${value}m'
+    printf "Values 30..37 are \e[33mforeground colors\e[m\n"
+    printf "Values 40..47 are \e[43mbackground colors\e[m\n"
+    printf "Value  1 gives a  \e[1mbold-faced look\e[m\n\n"
+
+    # foreground colors
+    for fgc in {30..37}; do
+        # background colors
+        for bgc in {40..47}; do
+            fgc=${fgc#37} # white
+            bgc=${bgc#40} # black
+
+            vals="${fgc:+$fgc;}${bgc}"
+            vals=${vals%%;}
+
+            seq0="${vals:+\e[${vals}m}"
+            printf "  %-9s" "${seq0:-(default)}"
+            printf " ${seq0}TEXT\e[m"
+            printf " \e[${vals:+${vals+$vals;}}1mBOLD\e[m"
+        done
+        echo
+        echo
+    done
+}
 
 fi # end of include guard

@@ -88,12 +88,12 @@ _RestoreEnvironment()
 }
 
 
-###########################################
-# Environment (Linux / Darwin / etc) specific settings
+################################################################################
+# Darwin Environment specific settings
 # NOTE: Bash's use of colors
 #       -- FreeBSD and MacOS use CLICOLOR and LSCOLORS.
 #       -- Linux uses LS_COLORS and has no equivalent to CLICOLOR.
-###########################################
+################################################################################
 _RunIfDarwin()
 {
     #####################################
@@ -161,6 +161,13 @@ _RunIfDarwin()
           "/Library/Frameworks/Python.framework/VersionsCurrent/bin"
 }
 
+
+################################################################################
+# Linux Environment specific settings
+# NOTE: Bash's use of colors
+#       -- FreeBSD and MacOS use CLICOLOR and LSCOLORS.
+#       -- Linux uses LS_COLORS and has no equivalent to CLICOLOR.
+################################################################################
 _RunIfLinux()
 {
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
@@ -178,17 +185,21 @@ _RunIfLinux()
 
     if [[ -x /usr/bin/dircolors ]]; then
         # sets LS_COLORS based on contents of .dircolors file.
-        if [[ -r "${XDG_CONFIG_HOME}/.dircolors" ]]; then
-            eval "$(dircolors -b "${XDG_CONFIG_HOME}/.dircolors")"
+        if [[ -r "${XDG_CONFIG_HOME}/dircolors" ]]; then
+            # this is our preferred (but non-standard) location for dircolors to
+            # keep the home directory clean.
+            eval "$(dircolors -b "${XDG_CONFIG_HOME}/dircolors")"
             if [[ -r "${HOME}/.dircolors" ]]; then
                 # TODO: use echo.warning / printf.warning and make sure that
                 #       output is redirected to log file for non-interactive
                 #       shells.
-                printf "[WARNING:] Found two .dircolors files in\n"
+                printf "[WARNING:] Found two [.]dircolors files in\n"
                 printf "\"%s\" and \"%S\".\n" "${HOME}" "${XDG_CONFIG_HOME}"
                 printf "Initializing from \"%s\"\n" "${XDG_CONFIG_HOME}"
             fi
         elif [[ -r "${HOME}/.dircolors" ]]; then
+            # this is the Linux default location for .dircolors, but not our
+            # preferred location.
             eval "$(dircolors -b "${HOME}/.dircolors")"
         fi
     fi
@@ -256,7 +267,26 @@ elif [[ "${UNAME}" == "Darwin" ]]; then
     _RunIfDarwin
 fi
 
-#####################################
+GROFF_NO_SGR="true"
+LESS_TERMCAP_mb="$(printf "\e[1;31m")"     # start blink
+LESS_TERMCAP_md="$(printf "\e[1;36m")"     # start bold
+LESS_TERMCAP_me="$(printf "\e[0m")"        # turn off bold, blink, and underline
+LESS_TERMCAP_se="$(printf "\e[0m")"        # stop standout (reverse video)
+LESS_TERMCAP_so="$(printf "\e[1;44;33m")"  # start standout (reverse video)
+LESS_TERMCAP_ue="$(printf "\e[0m")"        # stop underline
+LESS_TERMCAP_us="$(printf "\e[1;32m")"     # start underline
+
+export  \
+    GROFF_NO_SGR \
+    LESS_TERMCAP_mb \
+    LESS_TERMCAP_md \
+    LESS_TERMCAP_me \
+    LESS_TERMCAP_se \
+    LESS_TERMCAP_so \
+    LESS_TERMCAP_ue \
+    LESS_TERMCAP_us
+
+####################################
 # Amend paths as appropriate.
 # NOTE: the pathvar.* utility functions (from bash.functions_util) are designed
 #       to easily give fine-grained control over any PATH environment variable
